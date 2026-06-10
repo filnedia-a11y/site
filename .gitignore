@@ -1,0 +1,23 @@
+# База данных (локальная)
+wishlist.db
+*.sqlite
+
+# Переменные окружения
+.env
+*.env
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+.venv/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
