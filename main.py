@@ -849,7 +849,7 @@ def edit_wishlist(slug):
         cur.close(); conn.close()
         flash('Виш не найден', 'error')
         return redirect(url_for('dashboard'))
-    if request.method == 'POST':
+        if request.method == 'POST':
     is_public = True if request.form.get('is_public') else False
     cur.execute(f'UPDATE wishlists SET title={p}, description={p}, cover_emoji={p}, is_public={p} WHERE id={p}',
             (request.form['title'], request.form.get('description', ''), request.form.get('cover_emoji', '🎁'), is_public, wishlist['id']))
