@@ -835,7 +835,6 @@ def add_to_wishlist(slug):
     </div>
     '''
     return render_template_string(HTML_BASE, theme=theme, title='Добавить желание', content=content)
-
 @app.route('/w/<slug>/edit', methods=['GET', 'POST'])
 def edit_wishlist(slug):
     if not session.get('user_id'):
@@ -846,19 +845,26 @@ def edit_wishlist(slug):
     cur.execute(f'SELECT * FROM wishlists WHERE slug={p} AND user_id={p}', (slug, session['user_id']))
     wishlist = cur.fetchone()
     if not wishlist:
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
         flash('Виш не найден', 'error')
         return redirect(url_for('dashboard'))
-      if request.method == 'POST':
-    is_public = True if request.form.get('is_public') else False
-    cur.execute(f'UPDATE wishlists SET title={p}, description={p}, cover_emoji={p}, is_public={p} WHERE id={p}',
-                (request.form['title'], request.form.get('description', ''), request.form.get('cover_emoji', '🎁'), is_public, wishlist['id']))
-    conn.commit()  # ← ОЧЕНЬ ВАЖНО: сохранить изменения в БД
+
+    if request.method == 'POST':
+        is_public = True if request.form.get('is_public') else False
+        cur.execute(f'UPDATE wishlists SET title={p}, description={p}, cover_emoji={p}, is_public={p} WHERE id={p}',
+            (request.form['title'], request.form.get('description', ''), request.form.get('cover_emoji', '🎁'), is_public, wishlist['id']))
+        conn.commit()
+        cur.close()
+        conn.close()
+        flash('✅ Виш обновлён!', 'success')
+        return redirect(url_for('view_wishlist', slug=slug))
+
+    # --- GET-запрос (оставляем как есть) ---
+    # Если нужно оставить форму для GET-запроса, она должна быть здесь, после блока `if request.method == 'POST'`
+    # Важно: этот блок должен быть выровнен так же, как и `if request.method == 'POST'`, то есть с одним уровнем отступа.
     cur.close()
     conn.close()
-    flash('✅ Виш обновлён!', 'success')
-    return redirect(url_for('view_wishlist', slug=slug))
-    cur.close(); conn.close()
     theme = session.get('theme', 'light')
     emojis = ['🎁', '🎂', '🎄', '💝', '🎓', '👰', '🏠', '🚗', '✈️', '💻', '📱', '🎮', '📚', '🎨', '⚽', '🎵', '💎', '🌹', '🍰', '🎈']
     emoji_html = ''.join([f'<div class="emoji-option {"selected" if e == wishlist["cover_emoji"] else ""}" onclick="selectEmoji(this, \'{e}\')">{e}</div>' for e in emojis])
