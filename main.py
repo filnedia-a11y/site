@@ -670,10 +670,10 @@ def new_wishlist():
         conn, db_type = get_db()
         cur = conn.cursor()
         p = ph(db_type)
-      is_public = True if request.form.get('is_public') else False
-if db_type == 'postgres':
-    cur.execute(f'INSERT INTO wishlists (user_id, title, description, slug, is_public, cover_emoji, created_at) VALUES ({p},{p},{p},{p},{p},{p},CURRENT_DATE)',
-                (session['user_id'], title, request.form.get('description', ''), slug, is_public, request.form.get('cover_emoji', '🎁')))
+        is_public = True if request.form.get('is_public') else False   # ← строка 673
+        if db_type == 'postgres':
+            cur.execute(f'INSERT INTO wishlists (user_id, title, description, slug, is_public, cover_emoji, created_at) VALUES ({p},{p},{p},{p},{p},{p},CURRENT_DATE)',
+                        (session['user_id'], title, request.form.get('description', ''), slug, is_public, request.form.get('cover_emoji', '🎁')))
         else:
             cur.execute(f'INSERT INTO wishlists (user_id, title, description, slug, is_public, cover_emoji, created_at) VALUES ({p},{p},{p},{p},{p},{p},?)',
                         (session['user_id'], title, request.form.get('description', ''), slug, is_public, request.form.get('cover_emoji', '🎁'), datetime.now().date()))
@@ -681,6 +681,7 @@ if db_type == 'postgres':
         cur.close(); conn.close()
         flash(f'🎉 Виш "{title}" создан!', 'success')
         return redirect(url_for('view_wishlist', slug=slug))
+    # ... остальной код (GET-часть) ...
     theme = session.get('theme', 'light')
     emojis = ['🎁', '🎂', '🎄', '💝', '🎓', '👰', '🏠', '🚗', '✈️', '💻', '📱', '🎮', '📚', '🎨', '⚽', '🎵', '💎', '🌹', '🍰', '🎈']
     emoji_html = ''.join([f'<div class="emoji-option" onclick="selectEmoji(this, \'{e}\')">{e}</div>' for e in emojis])
