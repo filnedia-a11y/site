@@ -1,4 +1,4 @@
-import os, sqlite3, hashlib, random, re
+import os, hashlib, random, re
 from datetime import datetime, timedelta
 from flask import Flask, render_template_string, request, redirect, url_for, session, flash
 
@@ -9,104 +9,153 @@ ADMIN_PASSWORD = "admin123"
 PORT = int(os.getenv("PORT", 5000))
 BASE_URL = os.getenv("RENDER_EXTERNAL_URL", f"http://localhost:{PORT}")
 
-# Для Render: сохраняем БД на Persistent Disk, для локалки — рядом с файлом
-DB_PATH = '/opt/render/project/src/data/wishlist.db' if os.getenv('RENDER') else 'wishlist.db'
-os.makedirs(os.path.dirname(DB_PATH) if os.path.dirname(DB_PATH) else '.', exist_ok=True)
-
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
 app.permanent_session_lifetime = timedelta(days=30)
 
-# ========== ГЛОБАЛЬНАЯ НАСТРОЙКА БД ==========
-_original_sqlite_connect = sqlite3.connect
-def _smart_connect(*args, **kwargs):
-    conn = _original_sqlite_connect(*args, **kwargs)
-    conn.row_factory = sqlite3.Row
-    return conn
-sqlite3.connect = _smart_connect
-# ==============================================
+# ========== УМНОЕ ПОДКЛЮЧЕНИЕ К БД ==========
+def get_db():
+    """Автоматически выбирает PostgreSQL (на Render) или SQLite (локально)"""
+    db_url = os.getenv("DATABASE_URL")
+    if db_url:
+        import psycopg2
+        from psycopg2.extras import RealDictCursor
+        if 'sslmode=' not in db_url:
+            db_url += '?sslmode=require'
+        conn = psycopg2.connect(db_url)
+        conn.cursor_factory = RealDictCursor
+        return conn, 'postgres'
+    else:
+        import sqlite3
+        conn = sqlite3.connect('wishlist.db')
+        conn.row_factory = sqlite3.Row
+        return conn, 'sqlite'
 
-# ========== БАЗА ДАННЫХ ==========
+def ph(db_type):
+    """Возвращает плейсхолдер: %s для PostgreSQL, ? для SQLite"""
+    return '%s' if db_type == 'postgres' else '?'
+
+def db_id_col(db_type):
+    """Тип ID колонки"""
+    return 'SERIAL PRIMARY KEY' if db_type == 'postgres' else 'INTEGER PRIMARY KEY AUTOINCREMENT'
+
+def db_bool_default(db_type):
+    """BOOLEAN vs INTEGER для bool"""
+    return 'BOOLEAN DEFAULT FALSE' if db_type == 'postgres' else 'INTEGER DEFAULT 0'
+
+def db_bool_true(db_type):
+    return 'BOOLEAN DEFAULT TRUE' if db_type == 'postgres' else 'INTEGER DEFAULT 1'
+
+def db_date_default(db_type):
+    return 'DATE DEFAULT CURRENT_DATE' if db_type == 'postgres' else 'DATE'
+
+def db_fk(db_type, ref_table, ref_col='id'):
+    """Foreign key — работает и там и там"""
+    return f', FOREIGN KEY (user_id) REFERENCES {ref_table}({ref_col})'
+
+def as_bool(value):
+    """Преобразует значение к bool (для совместимости PostgreSQL/SQLite)"""
+    if value is None: return False
+    if isinstance(value, bool): return value
+    return bool(value)
+
+# ========== ИНИЦИАЛИЗАЦИЯ БД ==========
 def init_db():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
+    conn, db_type = get_db()
+    cur = conn.cursor()
+    p = ph(db_type)
+    id_col = db_id_col(db_type)
+    bool_def = db_bool_default(db_type)
+    bool_true = db_bool_true(db_type)
+    date_def = db_date_default(db_type)
     
-    c.execute('''CREATE TABLE IF NOT EXISTS users (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        username TEXT UNIQUE, password TEXT, email TEXT,
-        theme TEXT DEFAULT 'light', currency TEXT DEFAULT 'BYN',
-        created_at DATE, is_admin INTEGER DEFAULT 0, is_banned INTEGER DEFAULT 0,
-        last_login DATE, login_count INTEGER DEFAULT 0
-    )''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS wishlists (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER, title TEXT, description TEXT,
-        slug TEXT UNIQUE, is_default INTEGER DEFAULT 0,
-        is_public INTEGER DEFAULT 1, cover_emoji TEXT DEFAULT '🎁',
-        created_at DATE, FOREIGN KEY (user_id) REFERENCES users(id)
-    )''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS wishlist_items (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        wishlist_id INTEGER, title TEXT, description TEXT, link TEXT,
-        price REAL, currency TEXT, image_url TEXT,
-        status TEXT DEFAULT 'active', reserved_by INTEGER,
-        priority INTEGER DEFAULT 0, created_at DATE,
-        FOREIGN KEY (wishlist_id) REFERENCES wishlists(id)
-    )''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS ideas (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        title TEXT, description TEXT, price REAL, currency TEXT,
-        image_url TEXT, link TEXT, category TEXT,
-        source TEXT DEFAULT 'manual', added_by INTEGER, created_at DATE
-    )''')
-    
-    c.execute('''CREATE TABLE IF NOT EXISTS reservations (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        item_id INTEGER, reserved_by INTEGER, reserved_at DATE,
-        FOREIGN KEY (item_id) REFERENCES wishlist_items(id)
-    )''')
-    
-    # Миграции
-    def add_column_if_not_exists(table, column, definition):
-        c.execute(f"PRAGMA table_info({table})")
-        existing = [row[1] for row in c.fetchall()]
-        if column not in existing:
-            try:
-                c.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
-            except: pass
-    
-    add_column_if_not_exists('users', 'is_admin', 'INTEGER DEFAULT 0')
-    add_column_if_not_exists('users', 'is_banned', 'INTEGER DEFAULT 0')
-    add_column_if_not_exists('users', 'last_login', 'DATE')
-    add_column_if_not_exists('users', 'login_count', 'INTEGER DEFAULT 0')
-    add_column_if_not_exists('wishlists', 'slug', 'TEXT')
-    add_column_if_not_exists('wishlists', 'is_public', 'INTEGER DEFAULT 1')
-    add_column_if_not_exists('wishlists', 'cover_emoji', 'TEXT DEFAULT "🎁"')
-    add_column_if_not_exists('wishlist_items', 'image_url', 'TEXT')
-    add_column_if_not_exists('wishlist_items', 'priority', 'INTEGER DEFAULT 0')
-    
-    # Админ
-    c.execute('SELECT * FROM users WHERE username=?', (ADMIN_USERNAME,))
-    if not c.fetchone():
-        hashed_pw = hashlib.sha256(ADMIN_PASSWORD.encode()).hexdigest()
-        c.execute('INSERT INTO users (username, password, is_admin, created_at, last_login, login_count) VALUES (?, ?, 1, ?, ?, 0)',
-                 (ADMIN_USERNAME, hashed_pw, datetime.now().date(), datetime.now().date()))
-        print(f"👤 Админ создан: {ADMIN_USERNAME}/{ADMIN_PASSWORD}")
+    if db_type == 'postgres':
+        # PostgreSQL синтаксис
+        cur.execute(f'''CREATE TABLE IF NOT EXISTS users (
+            id {id_col}, username TEXT UNIQUE, password TEXT, email TEXT,
+            theme TEXT DEFAULT 'light', currency TEXT DEFAULT 'BYN',
+            created_at {date_def}, is_admin {bool_def}, is_banned {bool_def},
+            last_login DATE, login_count INTEGER DEFAULT 0
+        )''')
+        cur.execute(f'''CREATE TABLE IF NOT EXISTS wishlists (
+            id {id_col}, user_id INTEGER, title TEXT, description TEXT,
+            slug TEXT UNIQUE, is_default {bool_def}, is_public {bool_true},
+            cover_emoji TEXT DEFAULT '🎁', created_at {date_def}
+        )''')
+        cur.execute(f'''CREATE TABLE IF NOT EXISTS wishlist_items (
+            id {id_col}, wishlist_id INTEGER, title TEXT, description TEXT, link TEXT,
+            price NUMERIC(10,2), currency TEXT, image_url TEXT,
+            status TEXT DEFAULT 'active', reserved_by INTEGER,
+            priority INTEGER DEFAULT 0, created_at {date_def}
+        )''')
+        cur.execute(f'''CREATE TABLE IF NOT EXISTS ideas (
+            id {id_col}, title TEXT, description TEXT,
+            price NUMERIC(10,2), currency TEXT, image_url TEXT, link TEXT,
+            category TEXT, source TEXT DEFAULT 'manual',
+            added_by INTEGER, created_at {date_def}
+        )''')
+        cur.execute(f'''CREATE TABLE IF NOT EXISTS reservations (
+            id {id_col}, item_id INTEGER, reserved_by INTEGER,
+            reserved_at {date_def}
+        )''')
+        cur.execute(f'SELECT id FROM users WHERE username = {p}', (ADMIN_USERNAME,))
+        if not cur.fetchone():
+            hashed_pw = hashlib.sha256(ADMIN_PASSWORD.encode()).hexdigest()
+            cur.execute(f'''INSERT INTO users (username, password, is_admin, created_at, last_login, login_count)
+                           VALUES ({p}, {p}, TRUE, CURRENT_DATE, CURRENT_DATE, 0)''',
+                        (ADMIN_USERNAME, hashed_pw))
+            print(f"👤 Админ создан: {ADMIN_USERNAME}/{ADMIN_PASSWORD}")
+    else:
+        # SQLite синтаксис
+        cur.execute(f'''CREATE TABLE IF NOT EXISTS users (
+            id {id_col}, username TEXT UNIQUE, password TEXT, email TEXT,
+            theme TEXT DEFAULT 'light', currency TEXT DEFAULT 'BYN',
+            created_at DATE, is_admin INTEGER DEFAULT 0, is_banned INTEGER DEFAULT 0,
+            last_login DATE, login_count INTEGER DEFAULT 0
+        )''')
+        cur.execute(f'''CREATE TABLE IF NOT EXISTS wishlists (
+            id {id_col}, user_id INTEGER, title TEXT, description TEXT,
+            slug TEXT UNIQUE, is_default INTEGER DEFAULT 0, is_public INTEGER DEFAULT 1,
+            cover_emoji TEXT DEFAULT '🎁', created_at DATE
+        )''')
+        cur.execute(f'''CREATE TABLE IF NOT EXISTS wishlist_items (
+            id {id_col}, wishlist_id INTEGER, title TEXT, description TEXT, link TEXT,
+            price REAL, currency TEXT, image_url TEXT,
+            status TEXT DEFAULT 'active', reserved_by INTEGER,
+            priority INTEGER DEFAULT 0, created_at DATE
+        )''')
+        cur.execute(f'''CREATE TABLE IF NOT EXISTS ideas (
+            id {id_col}, title TEXT, description TEXT,
+            price REAL, currency TEXT, image_url TEXT, link TEXT,
+            category TEXT, source TEXT DEFAULT 'manual',
+            added_by INTEGER, created_at DATE
+        )''')
+        cur.execute(f'''CREATE TABLE IF NOT EXISTS reservations (
+            id {id_col}, item_id INTEGER, reserved_by INTEGER, reserved_at DATE
+        )''')
+        cur.execute(f'SELECT * FROM users WHERE username={p}', (ADMIN_USERNAME,))
+        if not cur.fetchone():
+            hashed_pw = hashlib.sha256(ADMIN_PASSWORD.encode()).hexdigest()
+            cur.execute(f'''INSERT INTO users (username, password, is_admin, created_at, last_login, login_count)
+                           VALUES ({p}, {p}, 1, ?, ?, 0)''',
+                        (ADMIN_USERNAME, hashed_pw, datetime.now().date(), datetime.now().date()))
+            print(f"👤 Админ создан: {ADMIN_USERNAME}/{ADMIN_PASSWORD}")
     
     conn.commit()
+    cur.close()
     conn.close()
     add_manual_ideas()
 
 # ========== ИДЕИ ==========
 def add_manual_ideas():
-    conn = sqlite3.connect(DB_PATH)
-    c = conn.cursor()
-    c.execute('SELECT COUNT(*) FROM ideas WHERE source="manual"')
-    if c.fetchone()[0] > 0:
-        conn.close()
+    conn, db_type = get_db()
+    cur = conn.cursor()
+    p = ph(db_type)
+    cur.execute(f'SELECT COUNT(*) as cnt FROM ideas WHERE source={p}', ('manual',))
+    cnt_row = cur.fetchone()
+    cnt = cnt_row['cnt'] if isinstance(cnt_row, dict) else cnt_row[0]
+    if cnt > 0:
+        cur.close(); conn.close()
         return
     
     ideas_data = [
@@ -157,10 +206,17 @@ def add_manual_ideas():
     ]
     
     for idea in ideas_data:
-        c.execute('INSERT INTO ideas (title, description, price, currency, image_url, link, category, source, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, "manual", ?)',
-                 (*idea, datetime.now().date()))
+        if db_type == 'postgres':
+            cur.execute(f'''INSERT INTO ideas (title, description, price, currency, image_url, link, category, source, created_at)
+                           VALUES ({p},{p},{p},{p},{p},{p},{p},{p},CURRENT_DATE)''',
+                        (*idea, 'manual'))
+        else:
+            cur.execute(f'''INSERT INTO ideas (title, description, price, currency, image_url, link, category, source, created_at)
+                           VALUES ({p},{p},{p},{p},{p},{p},{p},{p},?)''',
+                        (*idea, 'manual', datetime.now().date()))
     
     conn.commit()
+    cur.close()
     conn.close()
     print(f"✅ Добавлено {len(ideas_data)} идей!")
 
@@ -193,10 +249,7 @@ HTML_BASE = '''
     <style>
         :root { --bg: #f5f7fa; --card: white; --text: #1f2937; --text-secondary: #6b7280; --primary: #6366f1; --primary-hover: #4f46e5; --border: #e5e7eb; --success: #10b981; --warning: #f59e0b; --danger: #ef4444; }
         [data-theme="dark"] { --bg: #0f172a; --card: #1e293b; --text: #f1f5f9; --text-secondary: #94a3b8; --primary: #818cf8; --primary-hover: #6366f1; --border: #334155; }
-        [data-theme="blue"] { --primary: #0ea5e9; }
-        [data-theme="green"] { --primary: #22c55e; }
-        [data-theme="purple"] { --primary: #a855f7; }
-        [data-theme="pink"] { --primary: #ec4899; }
+        [data-theme="blue"] { --primary: #0ea5e9; } [data-theme="green"] { --primary: #22c55e; } [data-theme="purple"] { --primary: #a855f7; } [data-theme="pink"] { --primary: #ec4899; }
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; min-height: 100vh; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
@@ -205,10 +258,8 @@ HTML_BASE = '''
         @keyframes bounce { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); } }
         @keyframes float { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-10px); } }
         @keyframes gradientMove { 0% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } 100% { background-position: 0% 50%; } }
-        .animate-fade { animation: fadeIn 0.6s ease-out; }
-        .animate-slide { animation: slideIn 0.5s ease-out; }
-        .animate-scale { animation: scaleIn 0.4s ease-out; }
-        .animate-bounce { animation: bounce 2s infinite; }
+        .animate-fade { animation: fadeIn 0.6s ease-out; } .animate-slide { animation: slideIn 0.5s ease-out; }
+        .animate-scale { animation: scaleIn 0.4s ease-out; } .animate-bounce { animation: bounce 2s infinite; }
         .animate-float { animation: float 3s ease-in-out infinite; }
         .container { max-width: 1200px; margin: 0 auto; padding: 20px; animation: fadeIn 0.5s ease-out; }
         .header { background: var(--card); padding: 16px 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); margin-bottom: 30px; position: sticky; top: 0; z-index: 100; }
@@ -222,12 +273,8 @@ HTML_BASE = '''
         .btn:hover { background: var(--primary-hover); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4); }
         .btn-secondary { background: var(--card); color: var(--text); border: 2px solid var(--border); box-shadow: none; }
         .btn-secondary:hover { background: var(--bg); border-color: var(--primary); color: var(--primary); }
-        .btn-success { background: var(--success); }
-        .btn-warning { background: var(--warning); }
-        .btn-danger { background: var(--danger); }
-        .btn-lg { padding: 14px 28px; font-size: 16px; }
-        .btn-sm { padding: 6px 12px; font-size: 12px; }
-        .btn-block { width: 100%; }
+        .btn-success { background: var(--success); } .btn-warning { background: var(--warning); } .btn-danger { background: var(--danger); }
+        .btn-lg { padding: 14px 28px; font-size: 16px; } .btn-sm { padding: 6px 12px; font-size: 12px; } .btn-block { width: 100%; }
         .card { background: var(--card); padding: 24px; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); margin-bottom: 20px; transition: all 0.4s; border: 1px solid var(--border); }
         .card:hover { transform: translateY(-4px); box-shadow: 0 12px 40px rgba(0,0,0,0.12); }
         .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
@@ -240,10 +287,8 @@ HTML_BASE = '''
         .alert-success { background: #d1fae5; color: #065f46; border-color: var(--success); }
         .alert-error { background: #fee2e2; color: #991b1b; border-color: var(--danger); }
         .badge { display: inline-flex; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
-        .badge-success { background: #d1fae5; color: #065f46; }
-        .badge-warning { background: #fef3c7; color: #92400e; }
-        .badge-primary { background: var(--primary); color: white; }
-        .badge-danger { background: #fee2e2; color: #991b1b; }
+        .badge-success { background: #d1fae5; color: #065f46; } .badge-warning { background: #fef3c7; color: #92400e; }
+        .badge-primary { background: var(--primary); color: white; } .badge-danger { background: #fee2e2; color: #991b1b; }
         .item-card { border: 2px solid var(--border); border-radius: 16px; overflow: hidden; transition: all 0.4s; background: var(--card); }
         .item-card:hover { transform: translateY(-6px); box-shadow: 0 20px 40px rgba(0,0,0,0.15); border-color: var(--primary); }
         .item-image { width: 100%; height: 220px; background: var(--bg); display: flex; align-items: center; justify-content: center; font-size: 72px; overflow: hidden; }
@@ -256,8 +301,7 @@ HTML_BASE = '''
         .flex { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
         .flex-between { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
         .flex-center { display: flex; justify-content: center; align-items: center; gap: 10px; }
-        .mb-4 { margin-bottom: 20px; }
-        .text-center { text-align: center; }
+        .mb-4 { margin-bottom: 20px; } .text-center { text-align: center; }
         .captcha-box { background: linear-gradient(135deg, rgba(99, 102, 241, 0.1) 0%, rgba(168, 85, 247, 0.1) 100%); padding: 20px; border-radius: 12px; margin: 15px 0; text-align: center; border: 2px dashed var(--primary); }
         .captcha-question { font-size: 28px; font-weight: 800; color: var(--primary); margin-bottom: 10px; }
         .hero { text-align: center; padding: 60px 20px; background: linear-gradient(135deg, rgba(99, 102, 241, 0.05) 0%, rgba(168, 85, 247, 0.05) 100%); border-radius: 24px; margin-bottom: 40px; }
@@ -349,12 +393,17 @@ def make_session_permanent():
 @app.route('/')
 def index():
     theme = session.get('theme', 'light')
-    conn = sqlite3.connect(DB_PATH)
-    users_count = conn.execute('SELECT COUNT(*) FROM users WHERE is_banned=0').fetchone()[0]
-    wishes_count = conn.execute('SELECT COUNT(*) FROM wishlists').fetchone()[0]
-    items_count = conn.execute('SELECT COUNT(*) FROM wishlist_items').fetchone()[0]
-    ideas_count = conn.execute('SELECT COUNT(*) FROM ideas').fetchone()[0]
-    conn.close()
+    conn, db_type = get_db()
+    cur = conn.cursor()
+    cur.execute('SELECT COUNT(*) as c FROM users WHERE is_banned=0')
+    users_count = cur.fetchone()['c'] if db_type == 'postgres' else cur.fetchone()[0]
+    cur.execute('SELECT COUNT(*) as c FROM wishlists')
+    wishes_count = cur.fetchone()['c'] if db_type == 'postgres' else cur.fetchone()[0]
+    cur.execute('SELECT COUNT(*) as c FROM wishlist_items')
+    items_count = cur.fetchone()['c'] if db_type == 'postgres' else cur.fetchone()[0]
+    cur.execute('SELECT COUNT(*) as c FROM ideas')
+    ideas_count = cur.fetchone()['c'] if db_type == 'postgres' else cur.fetchone()[0]
+    cur.close(); conn.close()
     
     user_logged = session.get("user_id")
     hero_buttons = '<a href="/dashboard" class="btn btn-lg">✨ Мои виши</a><a href="/wishlist/new" class="btn btn-secondary btn-lg">➕ Создать виш</a>' if user_logged else '<a href="/register" class="btn btn-lg">🚀 Начать бесплатно</a><a href="/ideas" class="btn btn-secondary btn-lg">💡 Идеи подарков</a>'
@@ -383,7 +432,6 @@ def index():
 def register():
     if session.get('user_id'):
         return redirect(url_for('dashboard'))
-    
     if request.method == 'POST':
         captcha_answer = request.form.get('captcha_answer', '').strip()
         correct_answer = session.get('captcha_answer')
@@ -394,34 +442,40 @@ def register():
         except:
             flash('❌ Введите число', 'error')
             return redirect(url_for('register'))
-        
         username = request.form['username'].strip()
         password = request.form['password']
         email = request.form.get('email', '')
-        
         if len(username) < 3 or len(password) < 4:
             flash('Минимум 3 символа имени и 4 пароля', 'error')
             return redirect(url_for('register'))
-        
-        conn = sqlite3.connect(DB_PATH)
-        if conn.execute('SELECT id FROM users WHERE username=?', (username,)).fetchone():
+        conn, db_type = get_db()
+        cur = conn.cursor()
+        p = ph(db_type)
+        cur.execute(f'SELECT id FROM users WHERE username={p}', (username,))
+        if cur.fetchone():
+            cur.close(); conn.close()
             flash('Такой вишелюб уже существует', 'error')
-            conn.close()
             return redirect(url_for('register'))
-        
         hashed_pw = hashlib.sha256(password.encode()).hexdigest()
-        c = conn.cursor()
-        c.execute('INSERT INTO users (username, password, email, created_at, last_login, login_count) VALUES (?, ?, ?, ?, ?, 1)',
-                 (username, hashed_pw, email, datetime.now().date(), datetime.now().date()))
-        user_id = c.lastrowid
+        if db_type == 'postgres':
+            cur.execute(f'INSERT INTO users (username, password, email, created_at, last_login, login_count) VALUES ({p},{p},{p},CURRENT_DATE,CURRENT_DATE,1) RETURNING id',
+                        (username, hashed_pw, email))
+            user_id = cur.fetchone()['id']
+        else:
+            cur.execute(f'INSERT INTO users (username, password, email, created_at, last_login, login_count) VALUES ({p},{p},{p},?,?,1)',
+                        (username, hashed_pw, email, datetime.now().date(), datetime.now().date()))
+            user_id = cur.lastrowid
         slug = slugify(f"{username}-main")
-        c.execute('INSERT INTO wishlists (user_id, title, description, slug, is_default, created_at) VALUES (?, ?, ?, ?, 1, ?)',
-                 (user_id, 'Мой первый виш', 'Главный вишлист', slug, datetime.now().date()))
+        if db_type == 'postgres':
+            cur.execute(f'INSERT INTO wishlists (user_id, title, description, slug, is_default, created_at) VALUES ({p},{p},{p},{p},TRUE,CURRENT_DATE)',
+                        (user_id, 'Мой первый виш', 'Главный вишлист', slug))
+        else:
+            cur.execute(f'INSERT INTO wishlists (user_id, title, description, slug, is_default, created_at) VALUES ({p},{p},{p},{p},1,?)',
+                        (user_id, 'Мой первый виш', 'Главный вишлист', slug, datetime.now().date()))
         conn.commit()
-        conn.close()
+        cur.close(); conn.close()
         flash('🎉 Добро пожаловать!', 'success')
         return redirect(url_for('login'))
-    
     question, answer = generate_captcha()
     session['captcha_answer'] = answer
     theme = session.get('theme', 'light')
@@ -447,57 +501,61 @@ def register():
 def login():
     if session.get('user_id'):
         return redirect(url_for('dashboard'))
-    
     if request.method == 'POST':
         is_admin_login = request.form.get('admin_login') == '1'
         username = request.form['username']
         password = request.form['password']
         hashed_pw = hashlib.sha256(password.encode()).hexdigest()
-        
-        conn = sqlite3.connect(DB_PATH)
+        conn, db_type = get_db()
+        cur = conn.cursor()
+        p = ph(db_type)
         if is_admin_login:
-            user = conn.execute('SELECT * FROM users WHERE username=? AND password=? AND is_admin=1 AND is_banned=0', 
-                               (username, hashed_pw)).fetchone()
+            cur.execute(f'SELECT * FROM users WHERE username={p} AND password={p} AND is_admin=1 AND is_banned=0', (username, hashed_pw))
+            user = cur.fetchone()
             if user:
                 session['user_id'] = user['id']
                 session['username'] = user['username']
-                session['is_admin'] = user['is_admin']
+                session['is_admin'] = as_bool(user['is_admin'])
                 session['theme'] = user['theme']
                 session['currency'] = user['currency']
-                conn.execute('UPDATE users SET last_login=?, login_count=login_count+1 WHERE id=?',
-                            (datetime.now().date(), user['id']))
+                if db_type == 'postgres':
+                    cur.execute(f'UPDATE users SET last_login=CURRENT_DATE, login_count=login_count+1 WHERE id={p}', (user['id'],))
+                else:
+                    cur.execute(f'UPDATE users SET last_login=?, login_count=login_count+1 WHERE id={p}', (datetime.now().date(), user['id']))
                 conn.commit()
-                conn.close()
+                cur.close(); conn.close()
                 flash(f'👑 Добро пожаловать, админ {user["username"]}!', 'success')
                 return redirect(url_for('admin'))
             else:
-                conn.close()
+                cur.close(); conn.close()
                 flash('🚫 Неверные данные администратора', 'error')
                 return redirect(url_for('login'))
         else:
-            user = conn.execute('SELECT * FROM users WHERE username=? AND password=?', (username, hashed_pw)).fetchone()
-            if user and user['is_banned']:
-                conn.close()
+            cur.execute(f'SELECT * FROM users WHERE username={p} AND password={p}', (username, hashed_pw))
+            user = cur.fetchone()
+            if user and as_bool(user['is_banned']):
+                cur.close(); conn.close()
                 flash('🚫 Аккаунт заблокирован', 'error')
                 return redirect(url_for('login'))
             if user:
                 session['user_id'] = user['id']
                 session['username'] = user['username']
-                session['is_admin'] = user['is_admin']
+                session['is_admin'] = as_bool(user['is_admin'])
                 session['theme'] = user['theme']
                 session['currency'] = user['currency']
-                conn.execute('UPDATE users SET last_login=?, login_count=login_count+1 WHERE id=?',
-                            (datetime.now().date(), user['id']))
+                if db_type == 'postgres':
+                    cur.execute(f'UPDATE users SET last_login=CURRENT_DATE, login_count=login_count+1 WHERE id={p}', (user['id'],))
+                else:
+                    cur.execute(f'UPDATE users SET last_login=?, login_count=login_count+1 WHERE id={p}', (datetime.now().date(), user['id']))
                 conn.commit()
-                conn.close()
+                cur.close(); conn.close()
                 flash(f'👋 С возвращением, {user["username"]}!', 'success')
-                if user['is_admin']:
+                if as_bool(user['is_admin']):
                     return redirect(url_for('admin'))
                 return redirect(url_for('dashboard'))
             else:
-                conn.close()
+                cur.close(); conn.close()
                 flash('Неверное имя или пароль', 'error')
-    
     theme = session.get('theme', 'light')
     content = '''
     <div class="card animate-scale" style="max-width: 500px; margin: 40px auto;">
@@ -526,7 +584,6 @@ def login():
             const counter = document.getElementById('clickCounter');
             const adminFlag = document.getElementById('adminLoginFlag');
             let resetTimer = null;
-            
             keyIcon.addEventListener('click', function() {
                 clickCount++;
                 keyIcon.style.transform = 'rotate(' + (clickCount * 72) + 'deg) scale(1.3)';
@@ -562,9 +619,15 @@ def dashboard():
         return redirect(url_for('login'))
     user_id = session['user_id']
     theme = session.get('theme', 'light')
-    conn = sqlite3.connect(DB_PATH)
-    wishlists = conn.execute('SELECT w.*, (SELECT COUNT(*) FROM wishlist_items WHERE wishlist_id=w.id) as items_count, (SELECT COUNT(*) FROM wishlist_items WHERE wishlist_id=w.id AND reserved_by IS NOT NULL) as reserved_count FROM wishlists w WHERE w.user_id = ? ORDER BY w.is_default DESC, w.created_at DESC', (user_id,)).fetchall()
-    conn.close()
+    conn, db_type = get_db()
+    cur = conn.cursor()
+    p = ph(db_type)
+    cur.execute(f'''SELECT w.*, 
+                    (SELECT COUNT(*) FROM wishlist_items WHERE wishlist_id=w.id) as items_count,
+                    (SELECT COUNT(*) FROM wishlist_items WHERE wishlist_id=w.id AND reserved_by IS NOT NULL) as reserved_count
+                    FROM wishlists w WHERE w.user_id = {p} ORDER BY w.is_default DESC, w.created_at DESC''', (user_id,))
+    wishlists = cur.fetchall()
+    cur.close(); conn.close()
     
     if not wishlists:
         content = '<div class="empty-state animate-scale"><div class="empty-state-icon">🎁</div><h2>У тебя пока нет вишей</h2><p style="color: var(--text-secondary); margin-bottom: 24px;">Создай первый!</p><a href="/wishlist/new" class="btn btn-lg">✨ Создать первый виш</a></div>'
@@ -574,7 +637,7 @@ def dashboard():
             items_count = int(w['items_count'] or 0)
             reserved_count = int(w['reserved_count'] or 0)
             progress = int((reserved_count / items_count * 100)) if items_count > 0 else 0
-            default_badge = '<span class="badge badge-primary">⭐ Главный</span>' if w['is_default'] else ''
+            default_badge = '<span class="badge badge-primary">⭐ Главный</span>' if as_bool(w['is_default']) else ''
             wishes_html += f'''
             <a href="/w/{w['slug']}" class="wish-card" style="text-decoration: none; color: inherit;">
                 <span class="wish-card-emoji">{w['cover_emoji'] or '🎁'}</span>
@@ -604,14 +667,20 @@ def new_wishlist():
             flash('Введите название', 'error')
             return redirect(url_for('new_wishlist'))
         slug = slugify(title)
-        conn = sqlite3.connect(DB_PATH)
-        conn.execute('INSERT INTO wishlists (user_id, title, description, slug, is_public, cover_emoji, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
-                    (session['user_id'], title, request.form.get('description', ''), slug, 1 if request.form.get('is_public') else 0, request.form.get('cover_emoji', '🎁'), datetime.now().date()))
+        conn, db_type = get_db()
+        cur = conn.cursor()
+        p = ph(db_type)
+        is_public = 1 if request.form.get('is_public') else 0
+        if db_type == 'postgres':
+            cur.execute(f'INSERT INTO wishlists (user_id, title, description, slug, is_public, cover_emoji, created_at) VALUES ({p},{p},{p},{p},{p},{p},CURRENT_DATE)',
+                        (session['user_id'], title, request.form.get('description', ''), slug, is_public, request.form.get('cover_emoji', '🎁')))
+        else:
+            cur.execute(f'INSERT INTO wishlists (user_id, title, description, slug, is_public, cover_emoji, created_at) VALUES ({p},{p},{p},{p},{p},{p},?)',
+                        (session['user_id'], title, request.form.get('description', ''), slug, is_public, request.form.get('cover_emoji', '🎁'), datetime.now().date()))
         conn.commit()
-        conn.close()
+        cur.close(); conn.close()
         flash(f'🎉 Виш "{title}" создан!', 'success')
         return redirect(url_for('view_wishlist', slug=slug))
-    
     theme = session.get('theme', 'light')
     emojis = ['🎁', '🎂', '🎄', '💝', '🎓', '👰', '🏠', '🚗', '✈️', '💻', '📱', '🎮', '📚', '🎨', '⚽', '🎵', '💎', '🌹', '🍰', '🎈']
     emoji_html = ''.join([f'<div class="emoji-option" onclick="selectEmoji(this, \'{e}\')">{e}</div>' for e in emojis])
@@ -626,29 +695,31 @@ def new_wishlist():
             <div class="flex"><button type="submit" class="btn" style="flex: 1;">✨ Создать</button><a href="/dashboard" class="btn btn-secondary" style="flex: 1;">Отмена</a></div>
         </form>
     </div>
-    <script>
-        function selectEmoji(el, emoji) {{ document.querySelectorAll(".emoji-option").forEach(e => e.classList.remove("selected")); el.classList.add("selected"); document.getElementById("coverEmoji").value = emoji; }}
-        document.querySelector(".emoji-option").classList.add("selected");
-    </script>
+    <script>function selectEmoji(el, emoji) {{ document.querySelectorAll(".emoji-option").forEach(e => e.classList.remove("selected")); el.classList.add("selected"); document.getElementById("coverEmoji").value = emoji; }} document.querySelector(".emoji-option").classList.add("selected");</script>
     '''
     return render_template_string(HTML_BASE, theme=theme, title='Новый виш', content=content)
 
 @app.route('/w/<slug>')
 def view_wishlist(slug):
-    conn = sqlite3.connect(DB_PATH)
-    wishlist = conn.execute('SELECT * FROM wishlists WHERE slug=?', (slug,)).fetchone()
+    conn, db_type = get_db()
+    cur = conn.cursor()
+    p = ph(db_type)
+    cur.execute(f'SELECT * FROM wishlists WHERE slug={p}', (slug,))
+    wishlist = cur.fetchone()
     if not wishlist:
-        conn.close()
+        cur.close(); conn.close()
         flash('Виш не найден', 'error')
         return redirect(url_for('index'))
-    user = conn.execute('SELECT * FROM users WHERE id=?', (wishlist['user_id'],)).fetchone()
+    cur.execute(f'SELECT * FROM users WHERE id={p}', (wishlist['user_id'],))
+    user = cur.fetchone()
     current_user_id = session.get('user_id')
-    if not wishlist['is_public'] and current_user_id != wishlist['user_id'] and not session.get('is_admin'):
-        conn.close()
+    if not as_bool(wishlist['is_public']) and current_user_id != wishlist['user_id'] and not session.get('is_admin'):
+        cur.close(); conn.close()
         flash('Виш приватный', 'error')
         return redirect(url_for('index'))
-    items = conn.execute('SELECT i.*, u.username as reserved_by_name FROM wishlist_items i LEFT JOIN users u ON i.reserved_by = u.id WHERE i.wishlist_id = ? ORDER BY i.priority DESC, i.created_at DESC', (wishlist['id'],)).fetchall()
-    conn.close()
+    cur.execute(f'SELECT i.*, u.username as reserved_by_name FROM wishlist_items i LEFT JOIN users u ON i.reserved_by = u.id WHERE i.wishlist_id = {p} ORDER BY i.priority DESC, i.created_at DESC', (wishlist['id'],))
+    items = cur.fetchall()
+    cur.close(); conn.close()
     is_owner = current_user_id == wishlist['user_id']
     
     items_html = ''
@@ -657,7 +728,6 @@ def view_wishlist(slug):
             price_html = f'<div class="item-price">💰 {item["price"]} {item["currency"] or "BYN"}</div>' if item['price'] else ''
             link_html = f'<a href="{item["link"]}" target="_blank" class="btn btn-secondary btn-sm">🔗 Купить</a>' if item['link'] else ''
             img_html = f'<img src="{item["image_url"]}" alt="{item["title"]}" onerror="this.parentElement.innerHTML=\'🎁\'">' if item['image_url'] else '🎁'
-            
             reserve_html = ''
             if item['reserved_by']:
                 if item['reserved_by'] == current_user_id:
@@ -668,11 +738,9 @@ def view_wishlist(slug):
                 reserve_html = f'<a href="/reserve/{item["id"]}" class="btn btn-success btn-block">🎯 Забрать</a>'
             elif not current_user_id:
                 reserve_html = '<a href="/login" class="btn btn-secondary btn-block">Войти</a>'
-            
             owner_actions = ''
             if is_owner:
                 owner_actions = f'<div style="margin-top: 10px; display: flex; gap: 6px;"><a href="/item/{item["id"]}/edit" class="btn btn-secondary btn-sm" style="flex: 1;">✏️</a><a href="/item/{item["id"]}/delete" class="btn btn-danger btn-sm" style="flex: 1;" onclick="return confirm(\'Удалить?\')">🗑️</a></div>'
-            
             items_html += f'''
             <div class="item-card">
                 <div class="item-image">{img_html}</div>
@@ -691,7 +759,6 @@ def view_wishlist(slug):
             items_html = f'<div class="empty-state" style="grid-column: 1/-1;"><div class="empty-state-icon">🎁</div><h3>Виш пустой</h3><p style="color: var(--text-secondary); margin: 12px 0 20px;">Добавь желание!</p><a href="/w/{slug}/add" class="btn">➕ Добавить</a><a href="/ideas" class="btn btn-secondary" style="margin-left: 10px;">💡 Из идей</a></div>'
         else:
             items_html = '<div class="empty-state" style="grid-column: 1/-1;"><div class="empty-state-icon">🤷</div><h3>Пока пусто</h3></div>'
-    
     owner_actions_html = ''
     if is_owner:
         owner_actions_html = f'''
@@ -702,7 +769,6 @@ def view_wishlist(slug):
             <a href="/w/{slug}/delete" class="btn btn-danger" onclick="return confirm('Удалить виш?')">🗑️</a>
         </div>
         '''
-    
     content = f'''
     <div class="card text-center animate-scale" style="margin-bottom: 30px;">
         <div style="font-size: 72px; margin-bottom: 12px;" class="animate-float">{wishlist['cover_emoji'] or '🎁'}</div>
@@ -720,30 +786,33 @@ def view_wishlist(slug):
 def add_to_wishlist(slug):
     if not session.get('user_id'):
         return redirect(url_for('login'))
-    conn = sqlite3.connect(DB_PATH)
-    wishlist = conn.execute('SELECT * FROM wishlists WHERE slug=? AND user_id=?', (slug, session['user_id'])).fetchone()
+    conn, db_type = get_db()
+    cur = conn.cursor()
+    p = ph(db_type)
+    cur.execute(f'SELECT * FROM wishlists WHERE slug={p} AND user_id={p}', (slug, session['user_id']))
+    wishlist = cur.fetchone()
     if not wishlist:
-        conn.close()
+        cur.close(); conn.close()
         flash('Виш не найден', 'error')
         return redirect(url_for('dashboard'))
-    
     if request.method == 'POST':
         title = request.form['title'].strip()
         if not title:
-            conn.close()
+            cur.close(); conn.close()
             flash('Введите название', 'error')
             return redirect(url_for('add_to_wishlist', slug=slug))
-        conn.execute('INSERT INTO wishlist_items (wishlist_id, title, description, link, price, currency, image_url, priority, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-                    (wishlist['id'], title, request.form.get('description', ''), request.form.get('link', ''),
-                     float(request.form['price']) if request.form.get('price') else None,
-                     request.form.get('currency', session.get('currency', 'BYN')),
-                     request.form.get('image_url', ''), int(request.form.get('priority', 0)), datetime.now().date()))
+        price = float(request.form['price']) if request.form.get('price') else None
+        if db_type == 'postgres':
+            cur.execute(f'INSERT INTO wishlist_items (wishlist_id, title, description, link, price, currency, image_url, priority, created_at) VALUES ({p},{p},{p},{p},{p},{p},{p},{p},CURRENT_DATE)',
+                        (wishlist['id'], title, request.form.get('description', ''), request.form.get('link', ''), price, request.form.get('currency', session.get('currency', 'BYN')), request.form.get('image_url', ''), int(request.form.get('priority', 0))))
+        else:
+            cur.execute(f'INSERT INTO wishlist_items (wishlist_id, title, description, link, price, currency, image_url, priority, created_at) VALUES ({p},{p},{p},{p},{p},{p},{p},{p},?)',
+                        (wishlist['id'], title, request.form.get('description', ''), request.form.get('link', ''), price, request.form.get('currency', session.get('currency', 'BYN')), request.form.get('image_url', ''), int(request.form.get('priority', 0)), datetime.now().date()))
         conn.commit()
-        conn.close()
+        cur.close(); conn.close()
         flash('✨ Добавлено в виш!', 'success')
         return redirect(url_for('view_wishlist', slug=slug))
-    
-    conn.close()
+    cur.close(); conn.close()
     theme = session.get('theme', 'light')
     currency_options = ''.join([f'<option value="{code}" {"selected" if code == session.get("currency", "BYN") else ""}>{name}</option>' for code, name in CURRENCIES.items()])
     content = f'''
@@ -770,20 +839,24 @@ def add_to_wishlist(slug):
 def edit_wishlist(slug):
     if not session.get('user_id'):
         return redirect(url_for('login'))
-    conn = sqlite3.connect(DB_PATH)
-    wishlist = conn.execute('SELECT * FROM wishlists WHERE slug=? AND user_id=?', (slug, session['user_id'])).fetchone()
+    conn, db_type = get_db()
+    cur = conn.cursor()
+    p = ph(db_type)
+    cur.execute(f'SELECT * FROM wishlists WHERE slug={p} AND user_id={p}', (slug, session['user_id']))
+    wishlist = cur.fetchone()
     if not wishlist:
-        conn.close()
+        cur.close(); conn.close()
         flash('Виш не найден', 'error')
         return redirect(url_for('dashboard'))
     if request.method == 'POST':
-        conn.execute('UPDATE wishlists SET title=?, description=?, cover_emoji=?, is_public=? WHERE id=?',
-                    (request.form['title'], request.form.get('description', ''), request.form.get('cover_emoji', '🎁'), 1 if request.form.get('is_public') else 0, wishlist['id']))
+        is_public = 1 if request.form.get('is_public') else 0
+        cur.execute(f'UPDATE wishlists SET title={p}, description={p}, cover_emoji={p}, is_public={p} WHERE id={p}',
+                    (request.form['title'], request.form.get('description', ''), request.form.get('cover_emoji', '🎁'), is_public, wishlist['id']))
         conn.commit()
-        conn.close()
+        cur.close(); conn.close()
         flash('✅ Виш обновлён!', 'success')
         return redirect(url_for('view_wishlist', slug=slug))
-    conn.close()
+    cur.close(); conn.close()
     theme = session.get('theme', 'light')
     emojis = ['🎁', '🎂', '🎄', '💝', '🎓', '👰', '🏠', '🚗', '✈️', '💻', '📱', '🎮', '📚', '🎨', '⚽', '🎵', '💎', '🌹', '🍰', '🎈']
     emoji_html = ''.join([f'<div class="emoji-option {"selected" if e == wishlist["cover_emoji"] else ""}" onclick="selectEmoji(this, \'{e}\')">{e}</div>' for e in emojis])
@@ -794,7 +867,7 @@ def edit_wishlist(slug):
             <div class="form-group"><label>Название</label><input type="text" name="title" required value="{wishlist['title']}"></div>
             <div class="form-group"><label>Описание</label><textarea name="description" rows="3">{wishlist['description'] or ''}</textarea></div>
             <div class="form-group"><label>Обложка</label><div class="emoji-picker">{emoji_html}</div><input type="hidden" name="cover_emoji" id="coverEmoji" value="{wishlist['cover_emoji'] or '🎁'}"></div>
-            <div class="form-group"><label style="display: flex; align-items: center; gap: 8px;"><input type="checkbox" name="is_public" value="1" {"checked" if wishlist['is_public'] else ""} style="width: auto;"><span>Публичный</span></label></div>
+            <div class="form-group"><label style="display: flex; align-items: center; gap: 8px;"><input type="checkbox" name="is_public" value="1" {"checked" if as_bool(wishlist['is_public']) else ""} style="width: auto;"><span>Публичный</span></label></div>
             <div class="flex"><button type="submit" class="btn" style="flex: 1;">💾 Сохранить</button><a href="/w/{slug}" class="btn btn-secondary" style="flex: 1;">Отмена</a></div>
         </form>
     </div>
@@ -806,37 +879,41 @@ def edit_wishlist(slug):
 def delete_wishlist(slug):
     if not session.get('user_id'):
         return redirect(url_for('login'))
-    conn = sqlite3.connect(DB_PATH)
-    wishlist = conn.execute('SELECT * FROM wishlists WHERE slug=? AND user_id=?', (slug, session['user_id'])).fetchone()
+    conn, db_type = get_db()
+    cur = conn.cursor()
+    p = ph(db_type)
+    cur.execute(f'SELECT * FROM wishlists WHERE slug={p} AND user_id={p}', (slug, session['user_id']))
+    wishlist = cur.fetchone()
     if wishlist:
-        conn.execute('DELETE FROM wishlist_items WHERE wishlist_id=?', (wishlist['id'],))
-        conn.execute('DELETE FROM wishlists WHERE id=?', (wishlist['id'],))
+        cur.execute(f'DELETE FROM wishlist_items WHERE wishlist_id={p}', (wishlist['id'],))
+        cur.execute(f'DELETE FROM wishlists WHERE id={p}', (wishlist['id'],))
         conn.commit()
         flash('🗑️ Виш удалён', 'success')
-    conn.close()
+    cur.close(); conn.close()
     return redirect(url_for('dashboard'))
 
 @app.route('/item/<int:item_id>/edit', methods=['GET', 'POST'])
 def edit_item(item_id):
     if not session.get('user_id'):
         return redirect(url_for('login'))
-    conn = sqlite3.connect(DB_PATH)
-    item = conn.execute('SELECT i.*, w.user_id, w.slug FROM wishlist_items i JOIN wishlists w ON i.wishlist_id=w.id WHERE i.id=?', (item_id,)).fetchone()
+    conn, db_type = get_db()
+    cur = conn.cursor()
+    p = ph(db_type)
+    cur.execute(f'SELECT i.*, w.user_id, w.slug FROM wishlist_items i JOIN wishlists w ON i.wishlist_id=w.id WHERE i.id={p}', (item_id,))
+    item = cur.fetchone()
     if not item or item['user_id'] != session['user_id']:
-        conn.close()
+        cur.close(); conn.close()
         flash('Нет доступа', 'error')
         return redirect(url_for('dashboard'))
     if request.method == 'POST':
-        conn.execute('UPDATE wishlist_items SET title=?, description=?, link=?, price=?, currency=?, image_url=?, priority=? WHERE id=?',
-                    (request.form['title'], request.form.get('description', ''), request.form.get('link', ''),
-                     float(request.form['price']) if request.form.get('price') else None,
-                     request.form.get('currency', 'BYN'), request.form.get('image_url', ''),
-                     int(request.form.get('priority', 0)), item_id))
+        price = float(request.form['price']) if request.form.get('price') else None
+        cur.execute(f'UPDATE wishlist_items SET title={p}, description={p}, link={p}, price={p}, currency={p}, image_url={p}, priority={p} WHERE id={p}',
+                    (request.form['title'], request.form.get('description', ''), request.form.get('link', ''), price, request.form.get('currency', 'BYN'), request.form.get('image_url', ''), int(request.form.get('priority', 0)), item_id))
         conn.commit()
-        conn.close()
+        cur.close(); conn.close()
         flash('✅ Обновлено!', 'success')
         return redirect(url_for('view_wishlist', slug=item['slug']))
-    conn.close()
+    cur.close(); conn.close()
     theme = session.get('theme', 'light')
     currency_options = ''.join([f'<option value="{code}" {"selected" if code == (item["currency"] or session.get("currency", "BYN")) else ""}>{name}</option>' for code, name in CURRENCIES.items()])
     content = f'''
@@ -862,41 +939,52 @@ def edit_item(item_id):
 def delete_item(item_id):
     if not session.get('user_id'):
         return redirect(url_for('login'))
-    conn = sqlite3.connect(DB_PATH)
-    item = conn.execute('SELECT i.wishlist_id, w.slug, w.user_id FROM wishlist_items i JOIN wishlists w ON i.wishlist_id=w.id WHERE i.id=?', (item_id,)).fetchone()
+    conn, db_type = get_db()
+    cur = conn.cursor()
+    p = ph(db_type)
+    cur.execute(f'SELECT i.wishlist_id, w.slug, w.user_id FROM wishlist_items i JOIN wishlists w ON i.wishlist_id=w.id WHERE i.id={p}', (item_id,))
+    item = cur.fetchone()
     if item and item['user_id'] == session['user_id']:
-        conn.execute('DELETE FROM wishlist_items WHERE id=?', (item_id,))
+        cur.execute(f'DELETE FROM wishlist_items WHERE id={p}', (item_id,))
         conn.commit()
         flash('🗑️ Удалено', 'success')
         slug = item['slug']
     else:
         slug = None
-    conn.close()
+    cur.close(); conn.close()
     return redirect(url_for('view_wishlist', slug=slug) if slug else url_for('dashboard'))
 
 @app.route('/reserve/<int:item_id>')
 def reserve(item_id):
     if not session.get('user_id'):
         return redirect(url_for('login'))
-    conn = sqlite3.connect(DB_PATH)
-    item = conn.execute('SELECT * FROM wishlist_items WHERE id=? AND reserved_by IS NULL', (item_id,)).fetchone()
+    conn, db_type = get_db()
+    cur = conn.cursor()
+    p = ph(db_type)
+    cur.execute(f'SELECT * FROM wishlist_items WHERE id={p} AND reserved_by IS NULL', (item_id,))
+    item = cur.fetchone()
     if item:
-        conn.execute('UPDATE wishlist_items SET reserved_by=? WHERE id=?', (session['user_id'], item_id))
-        conn.execute('INSERT INTO reservations (item_id, reserved_by, reserved_at) VALUES (?, ?, ?)', (item_id, session['user_id'], datetime.now().date()))
+        cur.execute(f'UPDATE wishlist_items SET reserved_by={p} WHERE id={p}', (session['user_id'], item_id))
+        if db_type == 'postgres':
+            cur.execute(f'INSERT INTO reservations (item_id, reserved_by, reserved_at) VALUES ({p},{p},CURRENT_DATE)', (item_id, session['user_id']))
+        else:
+            cur.execute(f'INSERT INTO reservations (item_id, reserved_by, reserved_at) VALUES ({p},{p},?)', (item_id, session['user_id'], datetime.now().date()))
         conn.commit()
         flash('🎯 Забронировано!', 'success')
-    conn.close()
+    cur.close(); conn.close()
     return redirect(request.referrer or url_for('index'))
 
 @app.route('/unreserve/<int:item_id>')
 def unreserve(item_id):
     if not session.get('user_id'):
         return redirect(url_for('login'))
-    conn = sqlite3.connect(DB_PATH)
-    conn.execute('UPDATE wishlist_items SET reserved_by=NULL WHERE id=? AND reserved_by=?', (item_id, session['user_id']))
-    conn.execute('DELETE FROM reservations WHERE item_id=? AND reserved_by=?', (item_id, session['user_id']))
+    conn, db_type = get_db()
+    cur = conn.cursor()
+    p = ph(db_type)
+    cur.execute(f'UPDATE wishlist_items SET reserved_by=NULL WHERE id={p} AND reserved_by={p}', (item_id, session['user_id']))
+    cur.execute(f'DELETE FROM reservations WHERE item_id={p} AND reserved_by={p}', (item_id, session['user_id']))
     conn.commit()
-    conn.close()
+    cur.close(); conn.close()
     flash('↩️ Бронь снята', 'success')
     return redirect(request.referrer or url_for('index'))
 
@@ -904,17 +992,21 @@ def unreserve(item_id):
 def ideas():
     theme = session.get('theme', 'light')
     user_currency = session.get('currency', 'BYN')
-    conn = sqlite3.connect(DB_PATH)
+    conn, db_type = get_db()
+    cur = conn.cursor()
+    p = ph(db_type)
     category = request.args.get('category', '')
     search = request.args.get('search', '').strip()
     if category:
-        ideas = conn.execute('SELECT * FROM ideas WHERE category=? ORDER BY created_at DESC', (category,)).fetchall()
+        cur.execute(f'SELECT * FROM ideas WHERE category={p} ORDER BY created_at DESC', (category,))
     elif search:
-        ideas = conn.execute('SELECT * FROM ideas WHERE title LIKE ? ORDER BY created_at DESC', (f'%{search}%',)).fetchall()
+        cur.execute(f"SELECT * FROM ideas WHERE title LIKE {p} ORDER BY created_at DESC", (f'%{search}%',))
     else:
-        ideas = conn.execute('SELECT * FROM ideas ORDER BY created_at DESC').fetchall()
-    categories = conn.execute('SELECT DISTINCT category FROM ideas WHERE category IS NOT NULL').fetchall()
-    conn.close()
+        cur.execute('SELECT * FROM ideas ORDER BY created_at DESC')
+    ideas = cur.fetchall()
+    cur.execute('SELECT DISTINCT category FROM ideas WHERE category IS NOT NULL')
+    categories = cur.fetchall()
+    cur.close(); conn.close()
     
     category_buttons = ''.join([f'<a href="/ideas?category={cat["category"]}" class="btn btn-sm {"btn-success" if category == cat["category"] else "btn-secondary"}">{cat["category"]}</a>' for cat in categories])
     ideas_html = ''
@@ -935,7 +1027,6 @@ def ideas():
             </div>
         </div>
         '''
-    
     content = f'''
     <div class="flex-between mb-4">
         <div><h1>💡 Идеи подарков</h1><p style="color: var(--text-secondary);">Готовые идеи для вишей</p></div>
@@ -959,21 +1050,34 @@ def ideas():
 def add_from_idea(idea_id):
     if not session.get('user_id'):
         return redirect(url_for('login'))
-    conn = sqlite3.connect(DB_PATH)
-    idea = conn.execute('SELECT * FROM ideas WHERE id=?', (idea_id,)).fetchone()
+    conn, db_type = get_db()
+    cur = conn.cursor()
+    p = ph(db_type)
+    cur.execute(f'SELECT * FROM ideas WHERE id={p}', (idea_id,))
+    idea = cur.fetchone()
     if idea:
-        wishlist = conn.execute('SELECT id FROM wishlists WHERE user_id=? ORDER BY is_default DESC, id ASC LIMIT 1', (session['user_id'],)).fetchone()
+        cur.execute(f'SELECT id FROM wishlists WHERE user_id={p} ORDER BY is_default DESC, id ASC LIMIT 1', (session['user_id'],))
+        wishlist = cur.fetchone()
         if not wishlist:
             slug = slugify(f"{session['username']}-main")
-            conn.execute('INSERT INTO wishlists (user_id, title, slug, is_default, created_at) VALUES (?, ?, ?, 1, ?)',
-                        (session['user_id'], 'Мой виш', slug, datetime.now().date()))
+            if db_type == 'postgres':
+                cur.execute(f'INSERT INTO wishlists (user_id, title, slug, is_default, created_at) VALUES ({p},{p},{p},TRUE,CURRENT_DATE)',
+                            (session['user_id'], 'Мой виш', slug))
+            else:
+                cur.execute(f'INSERT INTO wishlists (user_id, title, slug, is_default, created_at) VALUES ({p},{p},{p},1,?)',
+                            (session['user_id'], 'Мой виш', slug, datetime.now().date()))
             conn.commit()
-            wishlist = conn.execute('SELECT id FROM wishlists WHERE user_id=? ORDER BY is_default DESC LIMIT 1', (session['user_id'],)).fetchone()
-        conn.execute('INSERT INTO wishlist_items (wishlist_id, title, description, link, price, currency, image_url, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
-                    (wishlist['id'], idea['title'], idea['description'], idea['link'], idea['price'], idea['currency'], idea['image_url'], datetime.now().date()))
+            cur.execute(f'SELECT id FROM wishlists WHERE user_id={p} ORDER BY is_default DESC LIMIT 1', (session['user_id'],))
+            wishlist = cur.fetchone()
+        if db_type == 'postgres':
+            cur.execute(f'INSERT INTO wishlist_items (wishlist_id, title, description, link, price, currency, image_url, created_at) VALUES ({p},{p},{p},{p},{p},{p},{p},CURRENT_DATE)',
+                        (wishlist['id'], idea['title'], idea['description'], idea['link'], idea['price'], idea['currency'], idea['image_url']))
+        else:
+            cur.execute(f'INSERT INTO wishlist_items (wishlist_id, title, description, link, price, currency, image_url, created_at) VALUES ({p},{p},{p},{p},{p},{p},{p},?)',
+                        (wishlist['id'], idea['title'], idea['description'], idea['link'], idea['price'], idea['currency'], idea['image_url'], datetime.now().date()))
         conn.commit()
         flash('✨ Добавлено в виш!', 'success')
-    conn.close()
+    cur.close(); conn.close()
     return redirect(url_for('ideas'))
 
 @app.route('/settings', methods=['GET', 'POST'])
@@ -982,13 +1086,15 @@ def settings():
         return redirect(url_for('login'))
     if request.method == 'POST':
         action = request.form.get('action', 'save')
+        conn, db_type = get_db()
+        cur = conn.cursor()
+        p = ph(db_type)
         if action == 'save':
             theme = request.form['theme']
             currency = request.form['currency']
-            conn = sqlite3.connect(DB_PATH)
-            conn.execute('UPDATE users SET theme=?, currency=? WHERE id=?', (theme, currency, session['user_id']))
+            cur.execute(f'UPDATE users SET theme={p}, currency={p} WHERE id={p}', (theme, currency, session['user_id']))
             conn.commit()
-            conn.close()
+            cur.close(); conn.close()
             session['theme'] = theme
             session['currency'] = currency
             flash('💾 Сохранено!', 'success')
@@ -998,27 +1104,31 @@ def settings():
             if len(new_password) < 4:
                 flash('Минимум 4 символа', 'error')
                 return redirect(url_for('settings'))
-            conn = sqlite3.connect(DB_PATH)
-            user = conn.execute('SELECT password FROM users WHERE id=?', (session['user_id'],)).fetchone()
+            cur.execute(f'SELECT password FROM users WHERE id={p}', (session['user_id'],))
+            user = cur.fetchone()
             if user['password'] != hashlib.sha256(old_password.encode()).hexdigest():
-                conn.close()
+                cur.close(); conn.close()
                 flash('❌ Неверный пароль', 'error')
                 return redirect(url_for('settings'))
-            conn.execute('UPDATE users SET password=? WHERE id=?', (hashlib.sha256(new_password.encode()).hexdigest(), session['user_id']))
+            cur.execute(f'UPDATE users SET password={p} WHERE id={p}', (hashlib.sha256(new_password.encode()).hexdigest(), session['user_id']))
             conn.commit()
-            conn.close()
+            cur.close(); conn.close()
             flash('🔐 Пароль изменён!', 'success')
         return redirect(url_for('settings'))
-    
     user_theme = session.get('theme', 'light')
     user_currency = session.get('currency', 'BYN')
     theme_options = ''.join([f'<option value="{code}" {"selected" if code == user_theme else ""}>{name}</option>' for code, name in THEMES.items()])
     currency_options = ''.join([f'<option value="{code}" {"selected" if code == user_currency else ""}>{name}</option>' for code, name in CURRENCIES.items()])
-    conn = sqlite3.connect(DB_PATH)
-    user = conn.execute('SELECT * FROM users WHERE id=?', (session['user_id'],)).fetchone()
-    wishlists_count = conn.execute('SELECT COUNT(*) FROM wishlists WHERE user_id=?', (session['user_id'],)).fetchone()[0]
-    items_count = conn.execute('SELECT COUNT(*) FROM wishlist_items i JOIN wishlists w ON i.wishlist_id=w.id WHERE w.user_id=?', (session['user_id'],)).fetchone()[0]
-    conn.close()
+    conn, db_type = get_db()
+    cur = conn.cursor()
+    p = ph(db_type)
+    cur.execute(f'SELECT * FROM users WHERE id={p}', (session['user_id'],))
+    user = cur.fetchone()
+    cur.execute(f'SELECT COUNT(*) as c FROM wishlists WHERE user_id={p}', (session['user_id'],))
+    wishlists_count = cur.fetchone()['c'] if db_type == 'postgres' else cur.fetchone()[0]
+    cur.execute(f'SELECT COUNT(*) as c FROM wishlist_items i JOIN wishlists w ON i.wishlist_id=w.id WHERE w.user_id={p}', (session['user_id'],))
+    items_count = cur.fetchone()['c'] if db_type == 'postgres' else cur.fetchone()[0]
+    cur.close(); conn.close()
     content = f'''
     <h1>⚙️ Настройки</h1>
     <div class="grid-2">
@@ -1052,15 +1162,21 @@ def settings():
 def admin():
     if not session.get('is_admin'):
         return redirect(url_for('login'))
-    conn = sqlite3.connect(DB_PATH)
-    users_count = conn.execute('SELECT COUNT(*) FROM users').fetchone()[0]
-    wishlists_count = conn.execute('SELECT COUNT(*) FROM wishlists').fetchone()[0]
-    items_count = conn.execute('SELECT COUNT(*) FROM wishlist_items').fetchone()[0]
-    ideas_count = conn.execute('SELECT COUNT(*) FROM ideas').fetchone()[0]
-    reservations_count = conn.execute('SELECT COUNT(*) FROM reservations').fetchone()[0]
-    recent_users = conn.execute('SELECT * FROM users ORDER BY created_at DESC LIMIT 5').fetchall()
-    conn.close()
-    recent_html = ''.join([f'<tr><td>{u["id"]}</td><td><b>{u["username"]}</b></td><td>{u["email"] or "-"}</td><td>{u["created_at"]}</td><td>{"🚫" if u["is_banned"] else "✅"}</td></tr>' for u in recent_users])
+    conn, db_type = get_db()
+    cur = conn.cursor()
+    def get_count(query, params=()):
+        cur.execute(query, params)
+        r = cur.fetchone()
+        return r['c'] if db_type == 'postgres' else r[0]
+    users_count = get_count('SELECT COUNT(*) as c FROM users')
+    wishlists_count = get_count('SELECT COUNT(*) as c FROM wishlists')
+    items_count = get_count('SELECT COUNT(*) as c FROM wishlist_items')
+    ideas_count = get_count('SELECT COUNT(*) as c FROM ideas')
+    reservations_count = get_count('SELECT COUNT(*) as c FROM reservations')
+    cur.execute('SELECT * FROM users ORDER BY created_at DESC LIMIT 5')
+    recent_users = cur.fetchall()
+    cur.close(); conn.close()
+    recent_html = ''.join([f'<tr><td>{u["id"]}</td><td><b>{u["username"]}</b></td><td>{u["email"] or "-"}</td><td>{u["created_at"]}</td><td>{"🚫" if as_bool(u["is_banned"]) else "✅"}</td></tr>' for u in recent_users])
     content = f'''
     <div class="flex-between mb-4"><h1>🔧 Админ-панель</h1><p style="color: var(--text-secondary);">Привет, {session['username']}!</p></div>
     <div class="grid" style="grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));">
@@ -1081,15 +1197,19 @@ def admin():
 def admin_users():
     if not session.get('is_admin'):
         return redirect(url_for('login'))
-    conn = sqlite3.connect(DB_PATH)
-    users = conn.execute('SELECT u.*, (SELECT COUNT(*) FROM wishlists WHERE user_id=u.id) as wishlists_count, (SELECT COUNT(*) FROM wishlist_items i JOIN wishlists w ON i.wishlist_id=w.id WHERE w.user_id=u.id) as items_count FROM users u ORDER BY u.created_at DESC').fetchall()
-    conn.close()
+    conn, db_type = get_db()
+    cur = conn.cursor()
+    cur.execute('''SELECT u.*, (SELECT COUNT(*) FROM wishlists WHERE user_id=u.id) as wishlists_count, 
+                   (SELECT COUNT(*) FROM wishlist_items i JOIN wishlists w ON i.wishlist_id=w.id WHERE w.user_id=u.id) as items_count 
+                   FROM users u ORDER BY u.created_at DESC''')
+    users = cur.fetchall()
+    cur.close(); conn.close()
     users_html = ''.join([f'''
     <tr>
         <td>{u["id"]}</td><td><b>{u["username"]}</b></td><td>{u["email"] or '-'}</td><td>{u["created_at"]}</td>
         <td>{u["login_count"]}</td><td>{u["wishlists_count"]}</td><td>{u["items_count"]}</td>
-        <td>{"<span class='badge badge-danger'>🚫 Бан</span>" if u["is_banned"] else "<span class='badge badge-success'>✅ OK</span>"}{"<span class='badge badge-primary'>⚡</span>" if u["is_admin"] else ""}</td>
-        <td><a href="/admin/user/{u["id"]}/toggle_ban" class="btn btn-sm {"btn-success" if u["is_banned"] else "btn-warning"}">{"✅ Разбан" if u["is_banned"] else "🚫 Бан"}</a></td>
+        <td>{"<span class='badge badge-danger'>🚫 Бан</span>" if as_bool(u["is_banned"]) else "<span class='badge badge-success'>✅ OK</span>"}{"<span class='badge badge-primary'>⚡</span>" if as_bool(u["is_admin"]) else ""}</td>
+        <td><a href="/admin/user/{u["id"]}/toggle_ban" class="btn btn-sm {"btn-success" if as_bool(u["is_banned"]) else "btn-warning"}">{"✅ Разбан" if as_bool(u["is_banned"]) else "🚫 Бан"}</a></td>
     </tr>
     ''' for u in users])
     content = f'''
@@ -1105,26 +1225,33 @@ def admin_toggle_ban(user_id):
     if user_id == session['user_id']:
         flash('Нельзя забанить себя!', 'error')
         return redirect(url_for('admin_users'))
-    conn = sqlite3.connect(DB_PATH)
-    user = conn.execute('SELECT * FROM users WHERE id=?', (user_id,)).fetchone()
+    conn, db_type = get_db()
+    cur = conn.cursor()
+    p = ph(db_type)
+    cur.execute(f'SELECT * FROM users WHERE id={p}', (user_id,))
+    user = cur.fetchone()
     if user:
-        new_status = 0 if user['is_banned'] else 1
-        conn.execute('UPDATE users SET is_banned=? WHERE id=?', (new_status, user_id))
+        new_status = 0 if as_bool(user['is_banned']) else 1
+        cur.execute(f'UPDATE users SET is_banned={p} WHERE id={p}', (new_status, user_id))
         conn.commit()
         flash(f'{"✅ Разбанен" if new_status == 0 else "🚫 Забанен"}: {user["username"]}', 'success')
-    conn.close()
+    cur.close(); conn.close()
     return redirect(url_for('admin_users'))
 
 @app.route('/u/<username>')
 def public_wishlist(username):
-    conn = sqlite3.connect(DB_PATH)
-    user = conn.execute('SELECT * FROM users WHERE username=?', (username,)).fetchone()
+    conn, db_type = get_db()
+    cur = conn.cursor()
+    p = ph(db_type)
+    cur.execute(f'SELECT * FROM users WHERE username={p}', (username,))
+    user = cur.fetchone()
     if not user:
-        conn.close()
+        cur.close(); conn.close()
         flash('Пользователь не найден', 'error')
         return redirect(url_for('index'))
-    wishlist = conn.execute('SELECT slug FROM wishlists WHERE user_id=? AND is_public=1 ORDER BY is_default DESC LIMIT 1', (user['id'],)).fetchone()
-    conn.close()
+    cur.execute(f'SELECT slug FROM wishlists WHERE user_id={p} AND is_public=1 ORDER BY is_default DESC LIMIT 1', (user['id'],))
+    wishlist = cur.fetchone()
+    cur.close(); conn.close()
     if wishlist:
         return redirect(url_for('view_wishlist', slug=wishlist['slug']))
     flash('Нет публичных вишей', 'error')
@@ -1135,5 +1262,5 @@ if __name__ == '__main__':
     print(f'✅ WishList Pro запущен!')
     print(f'🌐 URL: {BASE_URL}')
     print(f'👤 Админ: {ADMIN_USERNAME} / {ADMIN_PASSWORD}')
-    print(f'💾 База: {DB_PATH}')
+    print(f'🗄️ БД: {"PostgreSQL (Supabase)" if os.getenv("DATABASE_URL") else "SQLite (локально)"}')
     app.run(host='0.0.0.0', port=PORT, debug=False)
