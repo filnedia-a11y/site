@@ -849,13 +849,15 @@ def edit_wishlist(slug):
         cur.close(); conn.close()
         flash('Виш не найден', 'error')
         return redirect(url_for('dashboard'))
-        if request.method == 'POST':
+      if request.method == 'POST':
     is_public = True if request.form.get('is_public') else False
     cur.execute(f'UPDATE wishlists SET title={p}, description={p}, cover_emoji={p}, is_public={p} WHERE id={p}',
-            (request.form['title'], request.form.get('description', ''), request.form.get('cover_emoji', '🎁'), is_public, wishlist['id']))
-        cur.close(); conn.close()
-        flash('✅ Виш обновлён!', 'success')
-        return redirect(url_for('view_wishlist', slug=slug))
+                (request.form['title'], request.form.get('description', ''), request.form.get('cover_emoji', '🎁'), is_public, wishlist['id']))
+    conn.commit()  # ← ОЧЕНЬ ВАЖНО: сохранить изменения в БД
+    cur.close()
+    conn.close()
+    flash('✅ Виш обновлён!', 'success')
+    return redirect(url_for('view_wishlist', slug=slug))
     cur.close(); conn.close()
     theme = session.get('theme', 'light')
     emojis = ['🎁', '🎂', '🎄', '💝', '🎓', '👰', '🏠', '🚗', '✈️', '💻', '📱', '🎮', '📚', '🎨', '⚽', '🎵', '💎', '🌹', '🍰', '🎈']
@@ -1230,11 +1232,13 @@ def admin_toggle_ban(user_id):
     p = ph(db_type)
     cur.execute(f'SELECT * FROM users WHERE id={p}', (user_id,))
     user = cur.fetchone()
-    if user:
-       new_bool = False if as_bool(user['is_banned']) else True
-cur.execute(f'UPDATE users SET is_banned={p} WHERE id={p}', (new_bool, user_id))
-flash(f'{"✅ Разбанен" if new_bool is False else "🚫 Забанен"}: {user["username"]}', 'success')
-    cur.close(); conn.close()
+if user:
+    new_bool = False if as_bool(user['is_banned']) else True
+    cur.execute(f'UPDATE users SET is_banned={p} WHERE id={p}', (new_bool, user_id))
+    conn.commit()  # ← сохранить изменения
+    flash(f'{"✅ Разбанен" if new_bool is False else "🚫 Забанен"}: {user["username"]}', 'success')
+    cur.close()
+    conn.close()
     return redirect(url_for('admin_users'))
 
 @app.route('/u/<username>')
