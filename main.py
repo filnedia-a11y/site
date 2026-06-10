@@ -1263,5 +1263,6 @@ if __name__ == '__main__':
     print(f'🌐 URL: {BASE_URL}')
     print(f'👤 Админ: {ADMIN_USERNAME} / {ADMIN_PASSWORD}')
     print(f'🗄️ БД: {"PostgreSQL (Supabase)" if os.getenv("DATABASE_URL") else "SQLite (локально)"}')
-     from waitress import serve
+    
+    from waitress import serve
     serve(app, host='0.0.0.0', port=PORT)
