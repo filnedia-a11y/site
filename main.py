@@ -395,7 +395,7 @@ def index():
     theme = session.get('theme', 'light')
     conn, db_type = get_db()
     cur = conn.cursor()
-    cur.execute('SELECT COUNT(*) as c FROM users WHERE is_banned=0')
+    cur.execute('SELECT COUNT(*) as c FROM users WHERE is_banned=FALSE')
     users_count = cur.fetchone()['c'] if db_type == 'postgres' else cur.fetchone()[0]
     cur.execute('SELECT COUNT(*) as c FROM wishlists')
     wishes_count = cur.fetchone()['c'] if db_type == 'postgres' else cur.fetchone()[0]
@@ -510,7 +510,7 @@ def login():
         cur = conn.cursor()
         p = ph(db_type)
         if is_admin_login:
-            cur.execute(f'SELECT * FROM users WHERE username={p} AND password={p} AND is_admin=1 AND is_banned=0', (username, hashed_pw))
+            cur.execute(f'SELECT * FROM users WHERE username={p} AND password={p} AND is_admin=TRUE AND is_banned=FALSE', (username, hashed_pw))
             user = cur.fetchone()
             if user:
                 session['user_id'] = user['id']
@@ -670,10 +670,10 @@ def new_wishlist():
         conn, db_type = get_db()
         cur = conn.cursor()
         p = ph(db_type)
-        is_public = 1 if request.form.get('is_public') else 0
-        if db_type == 'postgres':
-            cur.execute(f'INSERT INTO wishlists (user_id, title, description, slug, is_public, cover_emoji, created_at) VALUES ({p},{p},{p},{p},{p},{p},CURRENT_DATE)',
-                        (session['user_id'], title, request.form.get('description', ''), slug, is_public, request.form.get('cover_emoji', '🎁')))
+      is_public = True if request.form.get('is_public') else False
+if db_type == 'postgres':
+    cur.execute(f'INSERT INTO wishlists (user_id, title, description, slug, is_public, cover_emoji, created_at) VALUES ({p},{p},{p},{p},{p},{p},CURRENT_DATE)',
+                (session['user_id'], title, request.form.get('description', ''), slug, is_public, request.form.get('cover_emoji', '🎁')))
         else:
             cur.execute(f'INSERT INTO wishlists (user_id, title, description, slug, is_public, cover_emoji, created_at) VALUES ({p},{p},{p},{p},{p},{p},?)',
                         (session['user_id'], title, request.form.get('description', ''), slug, is_public, request.form.get('cover_emoji', '🎁'), datetime.now().date()))
@@ -849,10 +849,9 @@ def edit_wishlist(slug):
         flash('Виш не найден', 'error')
         return redirect(url_for('dashboard'))
     if request.method == 'POST':
-        is_public = 1 if request.form.get('is_public') else 0
-        cur.execute(f'UPDATE wishlists SET title={p}, description={p}, cover_emoji={p}, is_public={p} WHERE id={p}',
-                    (request.form['title'], request.form.get('description', ''), request.form.get('cover_emoji', '🎁'), is_public, wishlist['id']))
-        conn.commit()
+    is_public = True if request.form.get('is_public') else False
+    cur.execute(f'UPDATE wishlists SET title={p}, description={p}, cover_emoji={p}, is_public={p} WHERE id={p}',
+            (request.form['title'], request.form.get('description', ''), request.form.get('cover_emoji', '🎁'), is_public, wishlist['id']))
         cur.close(); conn.close()
         flash('✅ Виш обновлён!', 'success')
         return redirect(url_for('view_wishlist', slug=slug))
@@ -1231,10 +1230,9 @@ def admin_toggle_ban(user_id):
     cur.execute(f'SELECT * FROM users WHERE id={p}', (user_id,))
     user = cur.fetchone()
     if user:
-        new_status = 0 if as_bool(user['is_banned']) else 1
-        cur.execute(f'UPDATE users SET is_banned={p} WHERE id={p}', (new_status, user_id))
-        conn.commit()
-        flash(f'{"✅ Разбанен" if new_status == 0 else "🚫 Забанен"}: {user["username"]}', 'success')
+       new_bool = False if as_bool(user['is_banned']) else True
+cur.execute(f'UPDATE users SET is_banned={p} WHERE id={p}', (new_bool, user_id))
+flash(f'{"✅ Разбанен" if new_bool is False else "🚫 Забанен"}: {user["username"]}', 'success')
     cur.close(); conn.close()
     return redirect(url_for('admin_users'))
 
