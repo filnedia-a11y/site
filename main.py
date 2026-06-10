@@ -1225,7 +1225,6 @@ def admin_users():
     <div class="card"><table><thead><tr><th>ID</th><th>Имя</th><th>Email</th><th>Рег.</th><th>Входов</th><th>Вишей</th><th>Желаний</th><th>Статус</th><th>Действия</th></tr></thead><tbody>{users_html}</tbody></table></div>
     '''
     return render_template_string(HTML_BASE, theme=session.get('theme', 'dark'), title='Пользователи', content=content)
-
 @app.route('/admin/user/<int:user_id>/toggle_ban')
 def admin_toggle_ban(user_id):
     if not session.get('is_admin'):
@@ -1238,11 +1237,11 @@ def admin_toggle_ban(user_id):
     p = ph(db_type)
     cur.execute(f'SELECT * FROM users WHERE id={p}', (user_id,))
     user = cur.fetchone()
-if user:
-    new_bool = False if as_bool(user['is_banned']) else True
-    cur.execute(f'UPDATE users SET is_banned={p} WHERE id={p}', (new_bool, user_id))
-    conn.commit()  # ← сохранить изменения
-    flash(f'{"✅ Разбанен" if new_bool is False else "🚫 Забанен"}: {user["username"]}', 'success')
+    if user:
+        new_bool = False if as_bool(user['is_banned']) else True
+        cur.execute(f'UPDATE users SET is_banned={p} WHERE id={p}', (new_bool, user_id))
+        conn.commit()
+        flash(f'{"✅ Разбанен" if new_bool is False else "🚫 Забанен"}: {user["username"]}', 'success')
     cur.close()
     conn.close()
     return redirect(url_for('admin_users'))
