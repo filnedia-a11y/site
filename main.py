@@ -1,5 +1,8 @@
-import os, sqlite3, hashlib, random, re
+import os, hashlib, random, re
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
+import psycopg2
+from psycopg2.extras import RealDictCursor
 from flask import Flask, render_template_string, request, redirect, url_for, session, flash
 
 # ========== НАСТРОЙКИ ==========
@@ -12,15 +15,16 @@ BASE_URL = os.getenv("RENDER_EXTERNAL_URL", f"http://localhost:{PORT}")
 app = Flask(__name__)
 app.secret_key = SECRET_KEY
 app.permanent_session_lifetime = timedelta(days=30)
-# ========== ГЛОБАЛЬНАЯ НАСТРОЙКА БД ==========
-# Делает все соединения sqlite3 "умными":
-# row[0] и row['column_name'] работают одновременно!
-_original_sqlite_connect = sqlite3.connect
-
-def _smart_connect(*args, **kwargs):
-    conn = _original_sqlite_connect(*args, **kwargs)
-    conn.row_factory = sqlite3.Row  # ← ВОТ ОНА, МАГИЯ!
+# ========== ПОДКЛЮЧЕНИЕ К POSTGRESQL ==========
+def get_db_connection():
+    """Возвращает соединение с PostgreSQL + dict-доступ к колонкам"""
+    db_url = os.getenv("DATABASE_URL", "postgresql://localhost/wishlist")
+    
+    conn = psycopg2.connect(db_url, sslmode='require')
+    conn.cursor_factory = RealDictCursor  # ← row['column'] работает!
+    
     return conn
+# ==============================================
 
 sqlite3.connect = _smart_connect
 # ==============================================
@@ -844,40 +848,51 @@ def register():
     '''
     
     return render_template_string(HTML_BASE, theme=theme, title='Регистрация', content=content)
+# СТАЛО (PostgreSQL):
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     if session.get('user_id'):
         return redirect(url_for('dashboard'))
     
     if request.method == 'POST':
-        # 🕵️ Проверяем — это вход админа?
-        is_admin_login = request.form.get('admin_login') == '1'
-        
         username = request.form['username']
         password = request.form['password']
         hashed_pw = hashlib.sha256(password.encode()).hexdigest()
         
-        if is_admin_login:
-            # 🔐 ВХОД КАК АДМИН
-            conn = sqlite3.connect('wishlist.db')
-            conn.row_factory = sqlite3.Row
-            user = conn.execute('''SELECT * FROM users 
-                                   WHERE username=? AND password=? AND is_admin=1 AND is_banned=0''', 
-                               (username, hashed_pw)).fetchone()
+        conn = get_db_connection()  # ← НОВАЯ ФУНКЦИЯ
+        cur = conn.cursor()
+        cur.execute('SELECT * FROM users WHERE username = %s AND password = %s', 
+                   (username, hashed_pw))
+        user = cur.fetchone()
+        
+        if user and user['is_banned']:  # ← Доступ по имени
+            flash('🚫 Этот аккаунт заблокирован', 'error')
+            cur.close()
+            conn.close()
+            return redirect(url_for('login'))
+        
+        if user:
+            session['user_id'] = user['id']  # ← Доступ по имени
+            session['username'] = user['username']
+            session['is_admin'] = user['is_admin']
+            session['theme'] = user['theme']
+            session['currency'] = user['currency']
+            
+            cur.execute('UPDATE users SET last_login = %s, login_count = login_count + 1 WHERE id = %s',
+                       (datetime.now().date(), user['id']))
+            conn.commit()
+            cur.close()
             conn.close()
             
-            if user:
-                session['user_id'] = user['id']
-                session['username'] = user['username']
-                session['is_admin'] = user['is_admin']
-                session['theme'] = user['theme']
-                session['currency'] = user['currency']
-                
-                conn = sqlite3.connect('wishlist.db')
-                conn.execute('UPDATE users SET last_login=?, login_count=login_count+1 WHERE id=?',
-                            (datetime.now().date(), user['id']))
-                conn.commit()
-                conn.close()
+            flash(f'👋 С возвращением, {user["username"]}!', 'success')
+            
+            if user['is_admin']:
+                return redirect(url_for('admin'))
+            return redirect(url_for('dashboard'))
+        else:
+            flash('Неверное имя или пароль', 'error')
+            cur.close()
+            conn.close()
                 
                 flash(f'👑 Добро пожаловать, админ {user["username"]}!', 'success')
                 return redirect(url_for('admin'))  # ← Сразу в админку
