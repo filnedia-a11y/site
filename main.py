@@ -582,7 +582,7 @@ HTML_BASE = '''
         {% endwith %}
         {{ content | safe }}
     </div>
-    <a href="https://t.me/your_bot_username" target="_blank" class="support-bot" title="💬 Поддержка 24/7">💬</a>
+    <a href="https://t.me/stepvl" target="_blank" class="support-bot" title="💬 Поддержка 24/7">💬</a>
     <div class="toast" id="toast"></div>
     <script>
         document.documentElement.setAttribute("data-theme", localStorage.getItem("theme") || "{{ theme }}");
