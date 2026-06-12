@@ -1,5 +1,5 @@
-flask
-gunicorn
-psycopg2-binary
-dnspython
-email-validator
+flask==3.0.0
+gunicorn==21.2.0
+psycopg[binary]==3.2.3
+dnspython==2.6.1
+email-validator==2.1.0
