@@ -28,7 +28,7 @@ def get_db():
         conn = sqlite3.connect('wishlist.db')
         conn.row_factory = sqlite3.Row
         return conn, 'sqlite'
-        
+
 def ph(db_type):
     return '%s' if db_type == 'postgres' else '?'
 
@@ -45,12 +45,14 @@ def db_date_default(db_type):
     return 'DATE DEFAULT CURRENT_DATE' if db_type == 'postgres' else 'DATE'
 
 def as_bool(value):
-    if value is None: return False
-    if isinstance(value, bool): return value
+    if value is None:
+        return False
+    if isinstance(value, bool):
+        return value
     return bool(value)
-    
- def bool_val(db_type, value):
-    """Возвращает правильное булево значение для SQL-запросов"""
+
+def bool_val(db_type, value):
+    """Возвращает правильное булево значение для SQL"""
     if db_type == 'postgres':
         return 'TRUE' if value else 'FALSE'
     else:
@@ -163,7 +165,7 @@ def init_db():
                         (ADMIN_USERNAME, hashed_pw, datetime.now().date(), datetime.now().date()))
             print(f"👤 Админ создан: {ADMIN_USERNAME}/{ADMIN_PASSWORD}")
 
-    # Миграции на случай обновления
+    # Миграции
     if db_type == 'postgres':
         add_column_if_not_exists(cur, 'wishlist_items', 'is_secret', 'BOOLEAN DEFAULT FALSE')
         add_column_if_not_exists(cur, 'wishlist_items', 'is_collective', 'BOOLEAN DEFAULT FALSE')
@@ -191,7 +193,8 @@ def add_manual_ideas():
     cnt_row = cur.fetchone()
     cnt = cnt_row['cnt'] if cnt_row else 0
     if cnt > 0:
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
         return
 
     ideas_data = [
@@ -271,7 +274,7 @@ def generate_captcha():
     op, answer = random.choice(ops)
     return f"{num1} {op} {num2}", answer
 
-# ========== ВАЛЮТЫ (с KZT и UAH) ==========
+# ========== ВАЛЮТЫ ==========
 CURRENCIES = {
     'BYN': '🇧🇾 BYN', 'USD': '🇺🇸 USD', 'EUR': '🇪🇺 EUR',
     'RUB': '🇷🇺 RUB', 'KZT': '🇰🇿 KZT', 'UAH': '🇺🇦 UAH'
@@ -288,8 +291,10 @@ CURRENCY_SYMBOLS = {
 }
 
 def convert_price(price, from_currency, to_currency):
-    if not price: return 0
-    if from_currency == to_currency: return price
+    if not price:
+        return 0
+    if from_currency == to_currency:
+        return price
     try:
         in_byn = float(price) / EXCHANGE_RATES.get(from_currency, 1)
         return round(in_byn * EXCHANGE_RATES.get(to_currency, 1), 2)
@@ -357,7 +362,7 @@ def send_email(to_email, subject, html_content):
         print(f"❌ Ошибка отправки email: {e}")
         return False
 
-# ========== HTML ШАБЛОН (с адаптивом + подарочной коробкой) ==========
+# ========== HTML ШАБЛОН ==========
 HTML_BASE = '''
 <!DOCTYPE html>
 <html lang="ru" data-theme="{{ theme }}">
@@ -370,7 +375,6 @@ HTML_BASE = '''
             --bg: #f5f7fa; --card: white; --text: #1f2937; --text-secondary: #6b7280;
             --primary: #6366f1; --primary-hover: #4f46e5; --border: #e5e7eb;
             --success: #10b981; --warning: #f59e0b; --danger: #ef4444;
-            --gift-red: #dc2626; --gift-gold: #fbbf24;
         }
         [data-theme="dark"] { --bg: #0f172a; --card: #1e293b; --text: #f1f5f9; --text-secondary: #94a3b8; --primary: #818cf8; --primary-hover: #6366f1; --border: #334155; }
         [data-theme="blue"] { --primary: #0ea5e9; }
@@ -379,7 +383,6 @@ HTML_BASE = '''
         [data-theme="pink"] { --primary: #ec4899; }
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body { font-family: -apple-system, BlinkMacSystemFont, sans-serif; background: var(--bg); color: var(--text); line-height: 1.6; min-height: 100vh; }
-
         @keyframes fadeIn { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes slideIn { from { opacity: 0; transform: translateX(-30px); } to { opacity: 1; transform: translateX(0); } }
         @keyframes scaleIn { from { opacity: 0; transform: scale(0.9); } to { opacity: 1; transform: scale(1); } }
@@ -389,13 +392,11 @@ HTML_BASE = '''
         @keyframes giftBounce { 0%, 100% { transform: translateY(0) rotate(-3deg); } 50% { transform: translateY(-10px) rotate(3deg); } }
         @keyframes giftShine { 0%, 100% { background-position: 0% 50%; } 50% { background-position: 100% 50%; } }
         @keyframes botPulse { 0%, 100% { box-shadow: 0 10px 30px rgba(99, 102, 241, 0.4); } 50% { box-shadow: 0 10px 30px rgba(99, 102, 241, 0.8), 0 0 0 15px rgba(99, 102, 241, 0.1); } }
-
         .animate-fade { animation: fadeIn 0.6s ease-out; }
         .animate-slide { animation: slideIn 0.5s ease-out; }
         .animate-scale { animation: scaleIn 0.4s ease-out; }
         .animate-bounce { animation: bounce 2s infinite; }
         .animate-float { animation: float 3s ease-in-out infinite; }
-
         .container { max-width: 1200px; margin: 0 auto; padding: 20px; animation: fadeIn 0.5s ease-out; }
         .header { background: var(--card); padding: 16px 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); margin-bottom: 30px; position: sticky; top: 0; z-index: 100; }
         .header-content { max-width: 1200px; margin: 0 auto; display: flex; justify-content: space-between; align-items: center; }
@@ -403,7 +404,6 @@ HTML_BASE = '''
         .nav { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
         .nav a { color: var(--text); text-decoration: none; padding: 8px 14px; border-radius: 10px; font-size: 14px; font-weight: 500; transition: all 0.3s; }
         .nav a:hover { background: var(--bg); color: var(--primary); transform: translateY(-2px); }
-
         .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 10px 20px; background: var(--primary); color: white; border: none; border-radius: 10px; cursor: pointer; text-decoration: none; font-size: 14px; font-weight: 600; transition: all 0.3s; box-shadow: 0 4px 12px rgba(99, 102, 241, 0.2); }
         .btn:hover { background: var(--primary-hover); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4); }
         .btn-secondary { background: var(--card); color: var(--text); border: 2px solid var(--border); box-shadow: none; }
@@ -414,23 +414,18 @@ HTML_BASE = '''
         .btn-lg { padding: 14px 28px; font-size: 16px; }
         .btn-sm { padding: 6px 12px; font-size: 12px; }
         .btn-block { width: 100%; }
-
         .card { background: var(--card); padding: 24px; border-radius: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.06); margin-bottom: 20px; transition: all 0.4s; border: 1px solid var(--border); }
         .card:hover { transform: translateY(-4px); box-shadow: 0 12px 40px rgba(0,0,0,0.12); }
-
         .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }
         .grid-2 { display: grid; grid-template-columns: repeat(auto-fill, minmax(350px, 1fr)); gap: 20px; }
-
         .form-group { margin-bottom: 18px; }
         .form-group label { display: block; margin-bottom: 6px; font-weight: 600; font-size: 14px; }
         .form-group input, .form-group textarea, .form-group select { width: 100%; padding: 12px 14px; border: 2px solid var(--border); border-radius: 10px; background: var(--card); color: var(--text); font-family: inherit; font-size: 14px; transition: all 0.3s; }
         .form-group input:focus, .form-group textarea:focus, .form-group select:focus { outline: none; border-color: var(--primary); box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1); }
-
         .alert { padding: 14px 20px; border-radius: 12px; margin-bottom: 20px; display: flex; align-items: center; gap: 10px; animation: slideIn 0.4s ease-out; border-left: 4px solid; }
         .alert-success { background: #d1fae5; color: #065f46; border-color: var(--success); }
         .alert-error { background: #fee2e2; color: #991b1b; border-color: var(--danger); }
         .alert-info { background: #dbeafe; color: #1e40af; border-color: #3b82f6; }
-
         .badge { display: inline-flex; align-items: center; gap: 4px; padding: 4px 12px; border-radius: 20px; font-size: 12px; font-weight: 600; }
         .badge-success { background: #d1fae5; color: #065f46; }
         .badge-warning { background: #fef3c7; color: #92400e; }
@@ -438,7 +433,6 @@ HTML_BASE = '''
         .badge-danger { background: #fee2e2; color: #991b1b; }
         .badge-secret { background: linear-gradient(135deg, #7c3aed, #4f46e5); color: white; }
         .badge-collective { background: linear-gradient(135deg, #10b981, #059669); color: white; }
-
         .item-card { border: 2px solid var(--border); border-radius: 16px; overflow: hidden; transition: all 0.4s; background: var(--card); position: relative; }
         .item-card:hover { transform: translateY(-6px); box-shadow: 0 20px 40px rgba(0,0,0,0.15); border-color: var(--primary); }
         .item-image { width: 100%; height: 220px; background: var(--bg); display: flex; align-items: center; justify-content: center; font-size: 72px; overflow: hidden; position: relative; }
@@ -448,50 +442,38 @@ HTML_BASE = '''
         .item-title { font-size: 17px; font-weight: 700; margin-bottom: 8px; }
         .item-price { font-size: 22px; font-weight: 800; color: var(--primary); margin-bottom: 10px; }
         .item-description { color: var(--text-secondary); margin-bottom: 15px; font-size: 14px; }
-
         .flex { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
         .flex-between { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; }
         .flex-center { display: flex; justify-content: center; align-items: center; gap: 10px; }
         .mb-4 { margin-bottom: 20px; }
         .text-center { text-align: center; }
-
         .captcha-box { background: linear-gradient(135deg, rgba(99, 102, 241, 0.1), rgba(168, 85, 247, 0.1)); padding: 20px; border-radius: 12px; margin: 15px 0; text-align: center; border: 2px dashed var(--primary); }
         .captcha-question { font-size: 28px; font-weight: 800; color: var(--primary); margin-bottom: 10px; }
-
         .hero { text-align: center; padding: 60px 20px; background: linear-gradient(135deg, rgba(99, 102, 241, 0.05), rgba(168, 85, 247, 0.05)); border-radius: 24px; margin-bottom: 40px; }
         .hero h1 { font-size: 52px; font-weight: 900; margin-bottom: 16px; background: linear-gradient(135deg, var(--primary), #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; background-size: 200% 200%; animation: gradientMove 5s ease infinite; }
         .hero p { font-size: 20px; color: var(--text-secondary); margin-bottom: 32px; }
-
         .stat-card { background: var(--card); padding: 24px; border-radius: 16px; text-align: center; transition: all 0.3s; border: 2px solid var(--border); }
         .stat-card:hover { transform: translateY(-4px); border-color: var(--primary); }
         .stat-number { font-size: 36px; font-weight: 900; color: var(--primary); background: linear-gradient(135deg, var(--primary), #a855f7); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
         .stat-label { color: var(--text-secondary); font-size: 14px; margin-top: 4px; }
-
         .wish-card { background: var(--card); border-radius: 16px; padding: 20px; border: 2px solid var(--border); transition: all 0.4s; cursor: pointer; animation: fadeIn 0.5s ease-out; }
         .wish-card:hover { transform: translateY(-6px); border-color: var(--primary); box-shadow: 0 12px 30px rgba(0,0,0,0.1); }
         .wish-card-emoji { font-size: 48px; margin-bottom: 12px; display: block; animation: float 3s ease-in-out infinite; }
         .wish-card-title { font-size: 18px; font-weight: 700; margin-bottom: 6px; }
         .wish-card-meta { color: var(--text-secondary); font-size: 13px; display: flex; gap: 10px; flex-wrap: wrap; }
-
         .empty-state { text-align: center; padding: 60px 20px; background: var(--card); border-radius: 16px; border: 2px dashed var(--border); }
         .empty-state-icon { font-size: 72px; margin-bottom: 16px; animation: bounce 2s infinite; display: inline-block; }
-
         .toast { position: fixed; bottom: 20px; right: 20px; background: var(--card); padding: 16px 24px; border-radius: 12px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); display: none; animation: slideIn 0.4s; z-index: 2000; border-left: 4px solid var(--primary); }
         .toast.show { display: flex; }
-
         .emoji-picker { display: grid; grid-template-columns: repeat(8, 1fr); gap: 6px; margin: 10px 0; }
         .emoji-option { font-size: 24px; padding: 8px; cursor: pointer; border-radius: 8px; transition: all 0.2s; border: 2px solid transparent; text-align: center; }
         .emoji-option:hover { background: var(--bg); transform: scale(1.2); }
         .emoji-option.selected { border-color: var(--primary); background: var(--bg); }
-
         .image-preview { width: 100%; height: 200px; border-radius: 12px; background: var(--bg); display: flex; align-items: center; justify-content: center; overflow: hidden; margin-top: 10px; border: 2px dashed var(--border); }
         .image-preview img { width: 100%; height: 100%; object-fit: cover; }
-
         table { width: 100%; border-collapse: collapse; }
         th, td { padding: 12px; text-align: left; border-bottom: 1px solid var(--border); }
         th { background: var(--bg); font-weight: 700; font-size: 13px; }
-
-        /* === ПОДАРОЧНАЯ КОРОБКА (красно-золотая) === */
         .gift-box {
             display: inline-block;
             font-size: 3em;
@@ -502,10 +484,7 @@ HTML_BASE = '''
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
-            animation: giftBounce 3s ease-in-out infinite, giftShine 3s ease infinite;
         }
-
-        /* === СКРЫТЫЕ ЖЕЛАНИЯ === */
         .secret-item .item-image img, .secret-item .item-image { filter: blur(12px); }
         .secret-overlay {
             position: absolute; top: 0; left: 0; right: 0; bottom: 0;
@@ -515,77 +494,28 @@ HTML_BASE = '''
             backdrop-filter: blur(2px);
             pointer-events: none;
         }
-
-        /* === КОЛЛЕКТИВНЫЙ ПОДАРОК === */
-        .collective-progress {
-            background: var(--bg);
-            border-radius: 12px;
-            height: 24px;
-            overflow: hidden;
-            margin: 12px 0;
-            border: 1px solid var(--border);
-        }
-        .collective-progress-bar {
-            height: 100%;
-            background: linear-gradient(90deg, #10b981, #059669);
-            transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1);
-            display: flex; align-items: center; justify-content: center;
-            color: white; font-weight: 700; font-size: 13px;
-            min-width: 40px;
-        }
-        .contributor-item {
-            padding: 10px 14px;
-            background: var(--bg);
-            border-radius: 8px;
-            margin-top: 6px;
-            border-left: 3px solid var(--success);
-            font-size: 14px;
-        }
-
-        /* === БОТ ПОДДЕРЖКИ === */
-        .support-bot {
-            position: fixed; bottom: 30px; right: 30px;
-            width: 64px; height: 64px;
-            background: linear-gradient(135deg, var(--primary), #a855f7);
-            border-radius: 50%;
-            display: flex; align-items: center; justify-content: center;
-            font-size: 32px;
-            text-decoration: none;
-            box-shadow: 0 10px 30px rgba(99, 102, 241, 0.4);
-            z-index: 999;
-            transition: all 0.3s;
-            animation: botPulse 3s ease-in-out infinite;
-        }
+        .collective-progress { background: var(--bg); border-radius: 12px; height: 24px; overflow: hidden; margin: 12px 0; border: 1px solid var(--border); }
+        .collective-progress-bar { height: 100%; background: linear-gradient(90deg, #10b981, #059669); transition: width 0.8s cubic-bezier(0.4, 0, 0.2, 1); display: flex; align-items: center; justify-content: center; color: white; font-weight: 700; font-size: 13px; min-width: 40px; }
+        .contributor-item { padding: 10px 14px; background: var(--bg); border-radius: 8px; margin-top: 6px; border-left: 3px solid var(--success); font-size: 14px; }
+        .support-bot { position: fixed; bottom: 30px; right: 30px; width: 64px; height: 64px; background: linear-gradient(135deg, var(--primary), #a855f7); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 32px; text-decoration: none; box-shadow: 0 10px 30px rgba(99, 102, 241, 0.4); z-index: 999; transition: all 0.3s; animation: botPulse 3s ease-in-out infinite; }
         .support-bot:hover { transform: scale(1.15) rotate(10deg); }
-
-        /* === ДЕСКТОП: дизайнерская асимметричная сетка === */
         @media (min-width: 1024px) {
             .container { max-width: 1400px; padding: 40px; }
             .hero { padding: 100px 40px; border-radius: 40px; }
             .hero h1 { font-size: 72px; letter-spacing: -2px; }
-            .grid-masonry {
-                display: grid;
-                grid-template-columns: 2fr 1fr 1fr;
-                grid-template-rows: auto auto;
-                gap: 30px;
-                margin-bottom: 60px;
-            }
+            .grid-masonry { display: grid; grid-template-columns: 2fr 1fr 1fr; grid-template-rows: auto auto; gap: 30px; margin-bottom: 60px; }
             .grid-masonry > :nth-child(1) { grid-row: span 2; }
             .grid-masonry .card { border-radius: 24px; transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1); }
             .grid-masonry .card:hover { transform: translateY(-12px) rotate(-1deg); box-shadow: 0 30px 60px rgba(99, 102, 241, 0.2); }
-
             .stats-float { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; }
             .stats-float .stat-card:nth-child(odd) { transform: translateY(-20px); }
             .stats-float .stat-card:nth-child(even) { transform: translateY(20px); }
             .stats-float .stat-card:hover { transform: translateY(0) scale(1.05); }
-
             .grid-2 { grid-template-columns: repeat(auto-fill, minmax(400px, 1fr)); gap: 30px; }
             .header { padding: 20px 40px; border-radius: 0 0 24px 24px; }
             .mb-4 { margin-bottom: 40px; }
             .card { padding: 40px; }
         }
-
-        /* === ПЛАНШЕТЫ === */
         @media (min-width: 768px) and (max-width: 1023px) {
             .container { max-width: 900px; padding: 24px; }
             .grid-masonry { grid-template-columns: repeat(2, 1fr); }
@@ -593,8 +523,6 @@ HTML_BASE = '''
             .stats-float { grid-template-columns: repeat(2, 1fr); }
             .stats-float .stat-card { transform: none; }
         }
-
-        /* === МОБИЛЬНАЯ ВЕРСИЯ === */
         @media (max-width: 767px) {
             .container { padding: 16px; }
             .hero { padding: 40px 20px; border-radius: 20px; }
@@ -689,14 +617,19 @@ def index():
         cur.execute(q, params)
         r = cur.fetchone()
         return r['c'] if db_type == 'postgres' else r[0]
-        
-    users_count = get_count(f'SELECT COUNT(*) as c FROM users WHERE is_banned={bool_val(db_type, False)}')    wishes_count = get_count('SELECT COUNT(*) as c FROM wishlists')
+
+    users_count = get_count(f'SELECT COUNT(*) as c FROM users WHERE is_banned={bool_val(db_type, False)}')
+    wishes_count = get_count('SELECT COUNT(*) as c FROM wishlists')
     items_count = get_count('SELECT COUNT(*) as c FROM wishlist_items')
     ideas_count = get_count('SELECT COUNT(*) as c FROM ideas')
-    cur.close(); conn.close()
+    cur.close()
+    conn.close()
 
     user_logged = session.get("user_id")
-    hero_buttons = '<a href="/dashboard" class="btn btn-lg">✨ Мои виши</a><a href="/wishlist/new" class="btn btn-secondary btn-lg">➕ Создать виш</a>' if user_logged else '<a href="/register" class="btn btn-lg">🚀 Начать бесплатно</a><a href="/ideas" class="btn btn-secondary btn-lg">💡 Идеи подарков</a>'
+    if user_logged:
+        hero_buttons = '<a href="/dashboard" class="btn btn-lg">✨ Мои виши</a><a href="/wishlist/new" class="btn btn-secondary btn-lg">➕ Создать виш</a>'
+    else:
+        hero_buttons = '<a href="/register" class="btn btn-lg">🚀 Начать бесплатно</a><a href="/ideas" class="btn btn-secondary btn-lg">💡 Идеи подарков</a>'
 
     content = f'''
     <div class="hero">
@@ -754,7 +687,8 @@ def register():
         p = ph(db_type)
         cur.execute(f'SELECT id FROM users WHERE username={p}', (username,))
         if cur.fetchone():
-            cur.close(); conn.close()
+            cur.close()
+            conn.close()
             flash('Такой вишелюб уже существует', 'error')
             return redirect(url_for('register'))
 
@@ -776,7 +710,8 @@ def register():
             cur.execute(f'INSERT INTO wishlists (user_id, title, description, slug, is_default, created_at) VALUES ({p},{p},{p},{p},1,?)',
                         (user_id, 'Мой первый виш', 'Главный вишлист', slug, datetime.now().date()))
         conn.commit()
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
         flash('🎉 Добро пожаловать!', 'success')
         return redirect(url_for('login'))
 
@@ -814,7 +749,9 @@ def login():
         cur = conn.cursor()
         p = ph(db_type)
         if is_admin_login:
-            cur.execute(f'SELECT * FROM users WHERE username={p} AND password={p} AND is_admin={bool_val(db_type, True)} AND is_banned={bool_val(db_type, False)}', (username, hashed_pw))
+            admin_true = bool_val(db_type, True)
+            banned_false = bool_val(db_type, False)
+            cur.execute(f'SELECT * FROM users WHERE username={p} AND password={p} AND is_admin={admin_true} AND is_banned={banned_false}', (username, hashed_pw))
             user = cur.fetchone()
             if user:
                 session['user_id'] = user['id']
@@ -827,18 +764,21 @@ def login():
                 else:
                     cur.execute(f'UPDATE users SET last_login=?, login_count=login_count+1 WHERE id={p}', (datetime.now().date(), user['id']))
                 conn.commit()
-                cur.close(); conn.close()
+                cur.close()
+                conn.close()
                 flash(f'👑 Добро пожаловать, админ {user["username"]}!', 'success')
                 return redirect(url_for('admin'))
             else:
-                cur.close(); conn.close()
+                cur.close()
+                conn.close()
                 flash('🚫 Неверные данные администратора', 'error')
                 return redirect(url_for('login'))
         else:
             cur.execute(f'SELECT * FROM users WHERE username={p} AND password={p}', (username, hashed_pw))
             user = cur.fetchone()
             if user and as_bool(user['is_banned']):
-                cur.close(); conn.close()
+                cur.close()
+                conn.close()
                 flash('🚫 Аккаунт заблокирован', 'error')
                 return redirect(url_for('login'))
             if user:
@@ -852,13 +792,15 @@ def login():
                 else:
                     cur.execute(f'UPDATE users SET last_login=?, login_count=login_count+1 WHERE id={p}', (datetime.now().date(), user['id']))
                 conn.commit()
-                cur.close(); conn.close()
+                cur.close()
+                conn.close()
                 flash(f'👋 С возвращением, {user["username"]}!', 'success')
                 if as_bool(user['is_admin']):
                     return redirect(url_for('admin'))
                 return redirect(url_for('dashboard'))
             else:
-                cur.close(); conn.close()
+                cur.close()
+                conn.close()
                 flash('Неверное имя или пароль', 'error')
     theme = session.get('theme', 'light')
     content = '''
@@ -929,7 +871,8 @@ def forgot_password():
 
         if not user:
             flash('✅ Если email зарегистрирован — письмо отправлено', 'success')
-            cur.close(); conn.close()
+            cur.close()
+            conn.close()
             return redirect(url_for('login'))
 
         import secrets
@@ -943,7 +886,8 @@ def forgot_password():
             cur.execute(f'INSERT INTO password_resets (user_id, token, expires_at, used) VALUES ({p},{p},{p},0)',
                         (user['id'], token, expires.isoformat()))
         conn.commit()
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
 
         reset_url = f"{BASE_URL}/reset-password/{token}"
         html = f'''
@@ -983,7 +927,8 @@ def reset_password(token):
     reset = cur.fetchone()
 
     if not reset or as_bool(reset['used']):
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
         flash('❌ Ссылка недействительна или уже использована', 'error')
         return redirect(url_for('forgot_password'))
 
@@ -991,7 +936,8 @@ def reset_password(token):
     if isinstance(expires, str):
         expires = datetime.fromisoformat(expires)
     if datetime.now() > expires:
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
         flash('⏰ Ссылка истекла', 'error')
         return redirect(url_for('forgot_password'))
 
@@ -1007,11 +953,13 @@ def reset_password(token):
         else:
             cur.execute(f'UPDATE password_resets SET used = 1 WHERE token = {p}', (token,))
         conn.commit()
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
         flash('✅ Пароль изменён!', 'success')
         return redirect(url_for('login'))
 
-    cur.close(); conn.close()
+    cur.close()
+    conn.close()
     content = '''
     <div class="card animate-scale" style="max-width: 500px; margin: 40px auto;">
         <h2>🔑 Новый пароль</h2>
@@ -1043,7 +991,8 @@ def dashboard():
                     (SELECT COUNT(*) FROM wishlist_items WHERE wishlist_id=w.id AND (reserved_by IS NOT NULL OR guest_name IS NOT NULL)) as reserved_count
                     FROM wishlists w WHERE w.user_id = {p} ORDER BY w.is_default DESC, w.created_at DESC''', (user_id,))
     wishlists = cur.fetchall()
-    cur.close(); conn.close()
+    cur.close()
+    conn.close()
 
     if not wishlists:
         content = '<div class="empty-state animate-scale"><div class="empty-state-icon">🎁</div><h2>У тебя пока нет вишей</h2><p style="color: var(--text-secondary); margin-bottom: 24px;">Создай первый!</p><a href="/wishlist/new" class="btn btn-lg">✨ Создать первый виш</a></div>'
@@ -1090,9 +1039,10 @@ def new_wishlist():
                         (session['user_id'], title, request.form.get('description', ''), slug, is_public_val, request.form.get('cover_emoji', '🎁')))
         else:
             cur.execute(f'INSERT INTO wishlists (user_id, title, description, slug, is_public, cover_emoji, created_at) VALUES ({p},{p},{p},{p},{p},{p},?)',
-                        (session['user_id'], title, request.form.get('description', ''), slug, is_public, request.form.get('cover_emoji', '🎁'), datetime.now().date()))
+                        (session['user_id'], title, request.form.get('description', ''), slug, is_public_val, request.form.get('cover_emoji', '🎁'), datetime.now().date()))
         conn.commit()
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
         flash(f'🎉 Виш "{title}" создан!', 'success')
         return redirect(url_for('view_wishlist', slug=slug))
 
@@ -1122,19 +1072,22 @@ def view_wishlist(slug):
     cur.execute(f'SELECT * FROM wishlists WHERE slug={p}', (slug,))
     wishlist = cur.fetchone()
     if not wishlist:
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
         flash('Виш не найден', 'error')
         return redirect(url_for('index'))
     cur.execute(f'SELECT * FROM users WHERE id={p}', (wishlist['user_id'],))
     user = cur.fetchone()
     current_user_id = session.get('user_id')
     if not as_bool(wishlist['is_public']) and current_user_id != wishlist['user_id'] and not session.get('is_admin'):
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
         flash('Виш приватный', 'error')
         return redirect(url_for('index'))
     cur.execute(f'SELECT i.*, u.username as reserved_by_name FROM wishlist_items i LEFT JOIN users u ON i.reserved_by = u.id WHERE i.wishlist_id = {p} ORDER BY i.priority DESC, i.created_at DESC', (wishlist['id'],))
     items = cur.fetchall()
-    cur.close(); conn.close()
+    cur.close()
+    conn.close()
     is_owner = current_user_id == wishlist['user_id']
     user_currency = session.get('currency', user['currency'] or 'BYN')
 
@@ -1143,24 +1096,23 @@ def view_wishlist(slug):
         for item in items:
             is_secret = as_bool(item.get('is_secret'))
             is_collective = as_bool(item.get('is_collective'))
-            is_reserved = item['reserved_by'] is not None or item['guest_name']
+            is_reserved = item['reserved_by'] is not None or item.get('guest_name')
             secret_class = 'secret-item' if (is_secret and not is_owner) else ''
 
-            # Для секретных желаний не показываем детали другим
             if is_secret and not is_owner and not is_reserved:
+                item_id_secret = item['id']
                 items_html += f'''
                 <div class="item-card {secret_class}">
                     <div class="item-image">🎁<div class="secret-overlay">🤫</div></div>
                     <div class="item-content">
                         <h3 class="item-title">Секретное желание <span class="badge badge-secret">🤫 Скрыто</span></h3>
                         <p class="item-description">Забронируй — и узнаешь что это!</p>
-                        <a href="/reserve/{item['id']}" class="btn btn-success btn-block">🎯 Забронировать вслепую</a>
+                        <a href="/reserve/{item_id_secret}" class="btn btn-success btn-block">🎯 Забронировать вслепую</a>
                     </div>
                 </div>
                 '''
                 continue
 
-            # Конвертация цены
             raw_price = item['price']
             item_currency = item['currency'] or 'BYN'
             if raw_price:
@@ -1169,39 +1121,44 @@ def view_wishlist(slug):
             else:
                 price_html = ''
 
-            link_html = f'<a href="{item["link"]}" target="_blank" class="btn btn-secondary btn-sm">🔗 Купить</a>' if item['link'] else ''
-            img_html = f'<img src="{item["image_url"]}" alt="{item["title"]}" onerror="this.parentElement.innerHTML=\'🎁\'">' if item['image_url'] else '🎁'
+            link_html = f'<a href="{item["link"]}" target="_blank" class="btn btn-secondary btn-sm">🔗 Купить</a>' if item.get('link') else ''
+            img_html = f'<img src="{item["image_url"]}" alt="{item["title"]}" onerror="this.parentElement.innerHTML=\'🎁\'">' if item.get('image_url') else '🎁'
 
             badges = ''
-            if is_secret: badges += '<span class="badge badge-secret">🤫 Секрет</span> '
-            if is_collective: badges += '<span class="badge badge-collective">💰 Коллективный</span> '
+            if is_secret:
+                badges += '<span class="badge badge-secret">🤫 Секрет</span> '
+            if is_collective:
+                badges += '<span class="badge badge-collective">💰 Коллективный</span> '
 
-            # Статус брони
             reserve_html = ''
-            if item['reserved_by']:
+            if item.get('reserved_by'):
                 if item['reserved_by'] == current_user_id:
-                    reserve_html = f'<span class="badge badge-success">✓ Вы забрали</span><a href="/unreserve/{item["id"]}" class="btn btn-secondary btn-sm" style="margin-top: 8px; display: block;">↩️ Отменить</a>'
+                    item_id_r = item['id']
+                    reserve_html = f'<span class="badge badge-success">✓ Вы забрали</span><a href="/unreserve/{item_id_r}" class="btn btn-secondary btn-sm" style="margin-top: 8px; display: block;">↩️ Отменить</a>'
                 else:
-                    name = item['reserved_by_name'] or 'Кто-то'
+                    name = item.get('reserved_by_name') or 'Кто-то'
                     reserve_html = f'<span class="badge badge-warning">🔒 Забрал {name}</span>'
-            elif item['guest_name']:
+            elif item.get('guest_name'):
                 reserve_html = f'<span class="badge badge-warning">🔒 Забронировал: {item["guest_name"]}</span>'
             elif current_user_id and current_user_id != wishlist['user_id']:
-                reserve_html = f'<a href="/reserve/{item["id"]}" class="btn btn-success btn-block">🎯 Забрать</a>'
+                item_id_r2 = item['id']
+                reserve_html = f'<a href="/reserve/{item_id_r2}" class="btn btn-success btn-block">🎯 Забрать</a>'
             elif not current_user_id:
-                reserve_html = f'<a href="/reserve/{item["id"]}" class="btn btn-success btn-block">🎯 Забронировать</a>'
+                item_id_r3 = item['id']
+                reserve_html = f'<a href="/reserve/{item_id_r3}" class="btn btn-success btn-block">🎯 Забронировать</a>'
 
-            # Коллективный подарок — прогресс
             collective_html = ''
             if is_collective and item.get('goal_amount'):
                 conn2, dt2 = get_db()
                 cur2 = conn2.cursor()
-                cur2.execute(f'SELECT COALESCE(SUM(amount), 0) as total FROM contributions WHERE item_id = {p}', (item['id'],))
+                p2 = ph(dt2)
+                cur2.execute(f'SELECT COALESCE(SUM(amount), 0) as total FROM contributions WHERE item_id = {p2}', (item['id'],))
                 r = cur2.fetchone()
-                collected = float(r['total'] if dt2 == 'postgres' else r[0])
-                cur2.execute(f'SELECT guest_name, amount, created_at FROM contributions WHERE item_id = {p} ORDER BY created_at DESC', (item['id'],))
+                collected = float(r['total']) if dt2 == 'postgres' else float(r[0] or 0)
+                cur2.execute(f'SELECT guest_name, amount, created_at FROM contributions WHERE item_id = {p2} ORDER BY created_at DESC', (item['id'],))
                 contribs = cur2.fetchall()
-                cur2.close(); conn2.close()
+                cur2.close()
+                conn2.close()
                 goal = float(item['goal_amount'])
                 progress = int((collected / goal * 100)) if goal > 0 else 0
                 contribs_html = ''
@@ -1212,12 +1169,11 @@ def view_wishlist(slug):
                         am = c['amount'] if dt2 == 'postgres' else c[1]
                         contribs_html += f'<div class="contributor-item"><b>{nm}</b> — {format_price(am, item_currency)}</div>'
                     contribs_html += '</div>'
-               # Выносим кнопку в отдельную переменную (избегаем ! в f-string)
                 contribute_btn = ""
                 if not reserve_html and not is_owner:
-                    item_id = item['id']
-                    contribute_btn = f'<a href="/reserve/{item_id}" class="btn btn-success btn-block" style="margin-top: 10px;">💰 Внести свой вклад</a>'
-                
+                    item_id_c = item['id']
+                    contribute_btn = f'<a href="/reserve/{item_id_c}" class="btn btn-success btn-block" style="margin-top: 10px;">💰 Внести свой вклад</a>'
+
                 collective_html = f'''
                 <div style="margin: 12px 0;">
                     <div class="flex-between" style="font-size: 13px; margin-bottom: 4px;">
@@ -1232,15 +1188,17 @@ def view_wishlist(slug):
 
             owner_actions = ''
             if is_owner:
-                owner_actions = f'<div style="margin-top: 10px; display: flex; gap: 6px;"><a href="/item/{item["id"]}/edit" class="btn btn-secondary btn-sm" style="flex: 1;">✏️</a><a href="/item/{item["id"]}/delete" class="btn btn-danger btn-sm" style="flex: 1;" onclick="return confirm(\'Удалить?\')">🗑️</a></div>'
+                item_id_o = item['id']
+                owner_actions = f'<div style="margin-top: 10px; display: flex; gap: 6px;"><a href="/item/{item_id_o}/edit" class="btn btn-secondary btn-sm" style="flex: 1;">✏️</a><a href="/item/{item_id_o}/delete" class="btn btn-danger btn-sm" style="flex: 1;" onclick="return confirm(\'Удалить?\')">🗑️</a></div>'
 
+            desc_html = f'<p class="item-description">{item["description"]}</p>' if item.get("description") else ""
             items_html += f'''
             <div class="item-card {secret_class}">
                 <div class="item-image">{img_html}</div>
                 <div class="item-content">
                     <h3 class="item-title">{item["title"]} {badges}</h3>
                     {price_html}
-                    {f'<p class="item-description">{item["description"]}</p>' if item["description"] else ""}
+                    {desc_html}
                     {link_html}
                     {collective_html}
                     <div style="margin-top: 12px;">{reserve_html}</div>
@@ -1256,22 +1214,25 @@ def view_wishlist(slug):
 
     owner_actions_html = ''
     if is_owner:
+        share_url = f'{BASE_URL}/w/{slug}'
         owner_actions_html = f'''
         <div class="flex" style="margin-top: 16px; justify-content: center; flex-wrap: wrap;">
             <a href="/w/{slug}/add" class="btn">➕ Добавить</a>
             <a href="/w/{slug}/edit" class="btn btn-secondary">✏️ Редактировать</a>
-            <button onclick="navigator.clipboard.writeText('{BASE_URL}/w/{slug}').then(() => showToast('📋 Скопировано!'))" class="btn btn-secondary">📋 Копировать</button>
+            <button onclick="navigator.clipboard.writeText('{share_url}').then(() => showToast('📋 Скопировано!'))" class="btn btn-secondary">📋 Копировать</button>
             <a href="/w/{slug}/delete" class="btn btn-danger" onclick="return confirm('Удалить виш?')">🗑️</a>
         </div>
         '''
 
+    desc_wish = f'<p style="color: var(--text-secondary); margin-bottom: 12px;">{wishlist["description"]}</p>' if wishlist.get('description') else ''
+    share_url2 = f'{BASE_URL}/w/{slug}'
     content = f'''
     <div class="card text-center animate-scale" style="margin-bottom: 30px;">
         <div style="font-size: 72px; margin-bottom: 12px;" class="animate-float">{wishlist['cover_emoji'] or '🎁'}</div>
         <h1 style="font-size: 36px; margin-bottom: 8px;">{wishlist['title']}</h1>
-        {f'<p style="color: var(--text-secondary); margin-bottom: 12px;">{wishlist["description"]}</p>' if wishlist['description'] else ''}
+        {desc_wish}
         <p style="color: var(--text-secondary);">👤 {user['username']} • 🎯 {len(items)} желаний</p>
-        <div style="margin-top: 12px; font-size: 13px;">🔗 <code style="background: var(--bg); padding: 4px 10px; border-radius: 6px;">{BASE_URL}/w/{slug}</code></div>
+        <div style="margin-top: 12px; font-size: 13px;">🔗 <code style="background: var(--bg); padding: 4px 10px; border-radius: 6px;">{share_url2}</code></div>
         {owner_actions_html}
     </div>
     <div class="grid">{items_html}</div>
@@ -1288,20 +1249,22 @@ def add_to_wishlist(slug):
     cur.execute(f'SELECT * FROM wishlists WHERE slug={p} AND user_id={p}', (slug, session['user_id']))
     wishlist = cur.fetchone()
     if not wishlist:
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
         flash('Виш не найден', 'error')
         return redirect(url_for('dashboard'))
 
     if request.method == 'POST':
         title = request.form['title'].strip()
         if not title:
-            cur.close(); conn.close()
+            cur.close()
+            conn.close()
             flash('Введите название', 'error')
             return redirect(url_for('add_to_wishlist', slug=slug))
 
         price = float(request.form['price']) if request.form.get('price') else None
-        is_secret = 1 if request.form.get('is_secret') else 0
-        is_collective = 1 if request.form.get('is_collective') else 0
+        is_secret = bool_val(db_type, request.form.get('is_secret'))
+        is_collective = bool_val(db_type, request.form.get('is_collective'))
         goal_amount = float(request.form['goal_amount']) if request.form.get('goal_amount') else None
 
         if db_type == 'postgres':
@@ -1321,11 +1284,13 @@ def add_to_wishlist(slug):
                  request.form.get('image_url', ''), int(request.form.get('priority', 0)),
                  is_secret, is_collective, goal_amount, datetime.now().date()))
         conn.commit()
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
         flash('✨ Добавлено в виш!', 'success')
         return redirect(url_for('view_wishlist', slug=slug))
 
-    cur.close(); conn.close()
+    cur.close()
+    conn.close()
     theme = session.get('theme', 'light')
     currency_options = ''.join([f'<option value="{code}" {"selected" if code == session.get("currency", "BYN") else ""}>{name}</option>' for code, name in CURRENCIES.items()])
     content = f'''
@@ -1370,23 +1335,27 @@ def edit_wishlist(slug):
     cur.execute(f'SELECT * FROM wishlists WHERE slug={p} AND user_id={p}', (slug, session['user_id']))
     wishlist = cur.fetchone()
     if not wishlist:
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
         flash('Виш не найден', 'error')
         return redirect(url_for('dashboard'))
 
     if request.method == 'POST':
-        is_public = 1 if request.form.get('is_public') else 0
+        is_public = bool_val(db_type, request.form.get('is_public'))
         cur.execute(f'UPDATE wishlists SET title={p}, description={p}, cover_emoji={p}, is_public={p} WHERE id={p}',
                     (request.form['title'], request.form.get('description', ''), request.form.get('cover_emoji', '🎁'), is_public, wishlist['id']))
         conn.commit()
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
         flash('✅ Виш обновлён!', 'success')
         return redirect(url_for('view_wishlist', slug=slug))
 
-    cur.close(); conn.close()
+    cur.close()
+    conn.close()
     theme = session.get('theme', 'light')
     emojis = ['🎁', '🎂', '🎄', '💝', '🎓', '👰', '🏠', '🚗', '✈️', '💻', '📱', '🎮', '📚', '🎨', '⚽', '🎵', '💎', '🌹', '🍰', '🎈']
     emoji_html = ''.join([f'<div class="emoji-option {"selected" if e == wishlist["cover_emoji"] else ""}" onclick="selectEmoji(this, \'{e}\')">{e}</div>' for e in emojis])
+    checked_attr = "checked" if as_bool(wishlist['is_public']) else ""
     content = f'''
     <div class="card animate-scale" style="max-width: 600px; margin: 0 auto;">
         <h2>✏️ Редактировать виш</h2>
@@ -1394,7 +1363,7 @@ def edit_wishlist(slug):
             <div class="form-group"><label>Название</label><input type="text" name="title" required value="{wishlist['title']}"></div>
             <div class="form-group"><label>Описание</label><textarea name="description" rows="3">{wishlist['description'] or ''}</textarea></div>
             <div class="form-group"><label>Обложка</label><div class="emoji-picker">{emoji_html}</div><input type="hidden" name="cover_emoji" id="coverEmoji" value="{wishlist['cover_emoji'] or '🎁'}"></div>
-            <div class="form-group"><label style="display: flex; align-items: center; gap: 8px;"><input type="checkbox" name="is_public" value="1" {"checked" if as_bool(wishlist['is_public']) else ""} style="width: auto;"><span>Публичный</span></label></div>
+            <div class="form-group"><label style="display: flex; align-items: center; gap: 8px;"><input type="checkbox" name="is_public" value="1" {checked_attr} style="width: auto;"><span>Публичный</span></label></div>
             <div class="flex"><button type="submit" class="btn" style="flex: 1;">💾 Сохранить</button><a href="/w/{slug}" class="btn btn-secondary" style="flex: 1;">Отмена</a></div>
         </form>
     </div>
@@ -1418,7 +1387,8 @@ def delete_wishlist(slug):
         cur.execute(f'DELETE FROM wishlists WHERE id={p}', (wishlist['id'],))
         conn.commit()
         flash('🗑️ Виш удалён', 'success')
-    cur.close(); conn.close()
+    cur.close()
+    conn.close()
     return redirect(url_for('dashboard'))
 
 @app.route('/item/<int:item_id>/edit', methods=['GET', 'POST'])
@@ -1431,27 +1401,35 @@ def edit_item(item_id):
     cur.execute(f'SELECT i.*, w.user_id, w.slug FROM wishlist_items i JOIN wishlists w ON i.wishlist_id=w.id WHERE i.id={p}', (item_id,))
     item = cur.fetchone()
     if not item or item['user_id'] != session['user_id']:
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
         flash('Нет доступа', 'error')
         return redirect(url_for('dashboard'))
 
     if request.method == 'POST':
         price = float(request.form['price']) if request.form.get('price') else None
-        is_secret = 1 if request.form.get('is_secret') else 0
-        is_collective = 1 if request.form.get('is_collective') else 0
+        is_secret = bool_val(db_type, request.form.get('is_secret'))
+        is_collective = bool_val(db_type, request.form.get('is_collective'))
         goal_amount = float(request.form['goal_amount']) if request.form.get('goal_amount') else None
         cur.execute(f'''UPDATE wishlist_items SET title={p}, description={p}, link={p}, price={p}, currency={p}, image_url={p}, priority={p}, is_secret={p}, is_collective={p}, goal_amount={p} WHERE id={p}''',
                     (request.form['title'], request.form.get('description', ''), request.form.get('link', ''),
                      price, request.form.get('currency', 'BYN'), request.form.get('image_url', ''),
                      int(request.form.get('priority', 0)), is_secret, is_collective, goal_amount, item_id))
         conn.commit()
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
         flash('✅ Обновлено!', 'success')
         return redirect(url_for('view_wishlist', slug=item['slug']))
 
-    cur.close(); conn.close()
+    cur.close()
+    conn.close()
     theme = session.get('theme', 'light')
-    currency_options = ''.join([f'<option value="{code}" {"selected" if code == (item["currency"] or session.get("currency", "BYN")) else ""}>{name}</option>' for code, name in CURRENCIES.items()])
+    item_currency = item["currency"] or session.get("currency", "BYN")
+    currency_options = ''.join([f'<option value="{code}" {"selected" if code == item_currency else ""}>{name}</option>' for code, name in CURRENCIES.items()])
+    secret_checked = "checked" if as_bool(item.get("is_secret")) else ""
+    collective_checked = "checked" if as_bool(item.get("is_collective")) else ""
+    goal_display = "block" if as_bool(item.get("is_collective")) else "none"
+    img_preview = f'<img src="{item["image_url"]}">' if item.get('image_url') else '🖼️ Превью'
     content = f'''
     <div class="card animate-scale" style="max-width: 650px; margin: 0 auto;">
         <h2>✏️ Редактировать</h2>
@@ -1463,17 +1441,17 @@ def edit_item(item_id):
                 <div class="form-group" style="flex: 1;"><label>Валюта</label><select name="currency">{currency_options}</select></div>
             </div>
             <div class="form-group"><label>Ссылка</label><input type="url" name="link" value="{item['link'] or ''}"></div>
-            <div class="form-group"><label>URL картинки</label><input type="url" name="image_url" value="{item['image_url'] or ''}" oninput="previewImage(this, 'imgPreview')"><div class="image-preview" id="imgPreview">{f'<img src="{item["image_url"]}">' if item['image_url'] else '🖼️ Превью'}</div></div>
+            <div class="form-group"><label>URL картинки</label><input type="url" name="image_url" value="{item['image_url'] or ''}" oninput="previewImage(this, 'imgPreview')"><div class="image-preview" id="imgPreview">{img_preview}</div></div>
             <div class="form-group"><label>Приоритет</label><input type="number" name="priority" min="0" max="10" value="{item['priority'] or 0}"></div>
             <div class="form-group"><label style="display: flex; align-items: center; gap: 8px;">
-                <input type="checkbox" name="is_secret" value="1" {"checked" if as_bool(item.get("is_secret")) else ""} style="width: auto;">
+                <input type="checkbox" name="is_secret" value="1" {secret_checked} style="width: auto;">
                 <span>🤫 Секретное</span>
             </label></div>
             <div class="form-group"><label style="display: flex; align-items: center; gap: 8px;">
-                <input type="checkbox" name="is_collective" value="1" {"checked" if as_bool(item.get("is_collective")) else ""} style="width: auto;" id="collectiveCheck" onchange="document.getElementById('goalField').style.display=this.checked?'block':'none'">
+                <input type="checkbox" name="is_collective" value="1" {collective_checked} style="width: auto;" id="collectiveCheck" onchange="document.getElementById('goalField').style.display=this.checked?'block':'none'">
                 <span>💰 Коллективный</span>
             </label></div>
-            <div class="form-group" id="goalField" style="display: {"block" if as_bool(item.get("is_collective")) else "none"};">
+            <div class="form-group" id="goalField" style="display: {goal_display};">
                 <label>Цель сбора</label>
                 <input type="number" name="goal_amount" step="0.01" value="{item['goal_amount'] or ''}">
             </div>
@@ -1501,7 +1479,8 @@ def delete_item(item_id):
         slug = item['slug']
     else:
         slug = None
-    cur.close(); conn.close()
+    cur.close()
+    conn.close()
     return redirect(url_for('view_wishlist', slug=slug) if slug else url_for('dashboard'))
 
 @app.route('/reserve/<int:item_id>', methods=['GET', 'POST'])
@@ -1512,7 +1491,8 @@ def reserve(item_id):
     cur.execute(f'SELECT * FROM wishlist_items WHERE id = {p}', (item_id,))
     item = cur.fetchone()
     if not item:
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
         flash('Подарок не найден', 'error')
         return redirect(url_for('index'))
 
@@ -1520,10 +1500,10 @@ def reserve(item_id):
     wishlist = cur.fetchone()
     slug = wishlist['slug'] if wishlist else None
 
-    # Залогиненный пользователь — обычная бронь
     if session.get('user_id'):
-        if item['reserved_by'] or item['guest_name']:
-            cur.close(); conn.close()
+        if item.get('reserved_by') or item.get('guest_name'):
+            cur.close()
+            conn.close()
             flash('Уже забронировано', 'error')
             return redirect(url_for('view_wishlist', slug=slug))
         cur.execute(f'UPDATE wishlist_items SET reserved_by = {p} WHERE id = {p}', (session['user_id'], item_id))
@@ -1532,11 +1512,11 @@ def reserve(item_id):
         else:
             cur.execute(f'INSERT INTO reservations (item_id, reserved_by, reserved_at) VALUES ({p},{p},?)', (item_id, session['user_id'], datetime.now().date()))
         conn.commit()
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
         flash('🎯 Забронировано!', 'success')
         return redirect(url_for('view_wishlist', slug=slug))
 
-    # ГОСТЕВАЯ БРОНЬ
     if request.method == 'POST':
         guest_name = request.form.get('guest_name', '').strip()
         guest_email = request.form.get('guest_email', '').strip()
@@ -1551,7 +1531,6 @@ def reserve(item_id):
                 flash(f'❌ {msg}', 'error')
                 return redirect(url_for('reserve', item_id=item_id))
 
-        # Коллективный подарок
         if as_bool(item.get('is_collective')) and item.get('goal_amount'):
             amount = float(request.form.get('amount', 0))
             if amount <= 0:
@@ -1562,23 +1541,26 @@ def reserve(item_id):
             else:
                 cur.execute(f'INSERT INTO contributions (item_id, guest_name, amount, created_at) VALUES ({p},{p},{p},?)', (item_id, guest_name, amount, datetime.now().date()))
             conn.commit()
-            cur.close(); conn.close()
+            cur.close()
+            conn.close()
             flash(f'💰 Спасибо, {guest_name}! Взнос записан', 'success')
             return redirect(url_for('view_wishlist', slug=slug))
 
-        # Обычная гостевая бронь
-        if item['reserved_by'] or item['guest_name']:
-            cur.close(); conn.close()
+        if item.get('reserved_by') or item.get('guest_name'):
+            cur.close()
+            conn.close()
             flash('Уже забронировано', 'error')
             return redirect(url_for('view_wishlist', slug=slug))
 
         cur.execute(f'UPDATE wishlist_items SET guest_name = {p}, guest_email = {p} WHERE id = {p}', (guest_name, guest_email, item_id))
         conn.commit()
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
         flash(f'🎉 Спасибо, {guest_name}! Бронь принята', 'success')
         return redirect(url_for('view_wishlist', slug=slug))
 
-    cur.close(); conn.close()
+    cur.close()
+    conn.close()
 
     is_collective = as_bool(item.get('is_collective')) and item.get('goal_amount')
     collected = 0
@@ -1586,12 +1568,14 @@ def reserve(item_id):
     if is_collective:
         conn2, dt2 = get_db()
         cur2 = conn2.cursor()
-        cur2.execute(f'SELECT SUM(amount) as total FROM contributions WHERE item_id = {p}', (item_id,))
+        p2 = ph(dt2)
+        cur2.execute(f'SELECT SUM(amount) as total FROM contributions WHERE item_id = {p2}', (item_id,))
         r = cur2.fetchone()
-        collected = float(r['total'] or 0) if dt2 == 'postgres' else (r[0] or 0)
-        cur2.execute(f'SELECT guest_name, amount, created_at FROM contributions WHERE item_id = {p} ORDER BY created_at DESC', (item_id,))
+        collected = float(r['total'] or 0) if dt2 == 'postgres' else float(r[0] or 0)
+        cur2.execute(f'SELECT guest_name, amount, created_at FROM contributions WHERE item_id = {p2} ORDER BY created_at DESC', (item_id,))
         contributors = cur2.fetchall()
-        cur2.close(); conn2.close()
+        cur2.close()
+        conn2.close()
 
     goal = float(item['goal_amount'] or 0)
     progress = int((collected / goal * 100)) if goal > 0 else 0
@@ -1599,26 +1583,44 @@ def reserve(item_id):
     contributors_html = ''
     if contributors:
         contributors_html = '<div style="margin-top: 20px;"><h4>👥 Уже внесли:</h4>'
+        item_curr = item["currency"] or "BYN"
         for c in contributors:
             nm = c['guest_name'] if db_type == 'postgres' else c[0]
             am = c['amount'] if db_type == 'postgres' else c[1]
-            contributors_html += f'<div class="contributor-item"><b>{nm}</b> — {format_price(am, item["currency"] or "BYN")}</div>'
+            contributors_html += f'<div class="contributor-item"><b>{nm}</b> — {format_price(am, item_curr)}</div>'
         contributors_html += '</div>'
+
+    item_curr2 = item["currency"] or "BYN"
+    if is_collective:
+        coll_block = f'''
+        <div class="collective-progress"><div class="collective-progress-bar" style="width: {min(progress, 100)}%;">{progress}%</div></div>
+        <p style="text-align: center; margin: 10px 0;">Собрано: <b>{format_price(collected, item_curr2)}</b> / {format_price(goal, item_curr2)}</p>
+        {contributors_html}
+        '''
+    else:
+        coll_block = ''
+
+    if is_collective:
+        amount_field = "<div class='form-group'><label>Сумма взноса *</label><input type='number' name='amount' step='0.01' min='1' required placeholder='Сколько внести?'></div>"
+        btn_text = "💰 Внести"
+        h2_text = "💰 Коллективный подарок"
+        sub_text = "Скинься вместе с друзьями!"
+    else:
+        amount_field = ""
+        btn_text = "🎯 Забронировать"
+        h2_text = "🎁 Забронировать подарок"
+        sub_text = "Без регистрации — укажи имя"
 
     content = f'''
     <div class="card animate-scale" style="max-width: 500px; margin: 40px auto;">
-        <h2>{"💰 Коллективный подарок" if is_collective else "🎁 Забронировать подарок"}</h2>
-        <p style="color: var(--text-secondary); margin-bottom: 20px;"><b>{item['title']}</b><br>{"Без регистрации — укажи имя" if not is_collective else "Скинься вместе с друзьями!"}</p>
-        {f'''
-        <div class="collective-progress"><div class="collective-progress-bar" style="width: {min(progress, 100)}%;">{progress}%</div></div>
-        <p style="text-align: center; margin: 10px 0;">Собрано: <b>{format_price(collected, item["currency"] or "BYN")}</b> / {format_price(goal, item["currency"] or "BYN")}</p>
-        {contributors_html}
-        ''' if is_collective else ''}
+        <h2>{h2_text}</h2>
+        <p style="color: var(--text-secondary); margin-bottom: 20px;"><b>{item['title']}</b><br>{sub_text}</p>
+        {coll_block}
         <form method="POST" style="margin-top: 20px;">
             <div class="form-group"><label>Твоё имя *</label><input type="text" name="guest_name" required minlength="2" placeholder="Как тебя зовут?"></div>
             <div class="form-group"><label>Email (необязательно)</label><input type="email" name="guest_email" placeholder="Для уведомлений"></div>
-            {"<div class='form-group'><label>Сумма взноса *</label><input type='number' name='amount' step='0.01' min='1' required placeholder='Сколько внести?'></div>" if is_collective else ""}
-            <button type="submit" class="btn btn-block btn-lg">{"💰 Внести" if is_collective else "🎯 Забронировать"}</button>
+            {amount_field}
+            <button type="submit" class="btn btn-block btn-lg">{btn_text}</button>
         </form>
         <p style="margin-top: 20px; text-align: center;"><a href="/login" style="color: var(--primary);">Войти как зарегистрированный</a></p>
     </div>
@@ -1635,7 +1637,8 @@ def unreserve(item_id):
     cur.execute(f'SELECT * FROM wishlist_items WHERE id = {p}', (item_id,))
     item = cur.fetchone()
     if not item:
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
         return redirect(url_for('index'))
     cur.execute(f'SELECT slug FROM wishlists WHERE id = {p}', (item['wishlist_id'],))
     wishlist = cur.fetchone()
@@ -1643,7 +1646,8 @@ def unreserve(item_id):
     cur.execute(f'UPDATE wishlist_items SET reserved_by=NULL WHERE id={p} AND reserved_by={p}', (item_id, session['user_id']))
     cur.execute(f'DELETE FROM reservations WHERE item_id={p} AND reserved_by={p}', (item_id, session['user_id']))
     conn.commit()
-    cur.close(); conn.close()
+    cur.close()
+    conn.close()
     flash('↩️ Бронь снята', 'success')
     return redirect(url_for('view_wishlist', slug=slug) if slug else url_for('index'))
 
@@ -1665,7 +1669,8 @@ def ideas():
     ideas = cur.fetchall()
     cur.execute('SELECT DISTINCT category FROM ideas WHERE category IS NOT NULL')
     categories = cur.fetchall()
-    cur.close(); conn.close()
+    cur.close()
+    conn.close()
 
     category_buttons = ''.join([f'<a href="/ideas?category={cat["category"]}" class="btn btn-sm {"btn-success" if category == cat["category"] else "btn-secondary"}">{cat["category"]}</a>' for cat in categories])
     ideas_html = ''
@@ -1677,9 +1682,12 @@ def ideas():
             price_html = f'<div class="item-price">💰 {format_price(converted, user_currency)}</div>'
         else:
             price_html = ''
-        link_html = f'<a href="{idea["link"]}" target="_blank" class="btn btn-secondary btn-sm">🔗</a>' if idea['link'] else ''
-        img_html = f'<img src="{idea["image_url"]}" alt="{idea["title"]}" onerror="this.parentElement.innerHTML=\'🎁\'">' if idea['image_url'] else '🎁'
-        add_btn = f'<a href="/add_item_from_idea/{idea["id"]}" class="btn btn-block">➕ В мой виш</a>' if session.get('user_id') else '<a href="/login" class="btn btn-secondary btn-block">Войти</a>'
+        link_html = f'<a href="{idea["link"]}" target="_blank" class="btn btn-secondary btn-sm">🔗</a>' if idea.get('link') else ''
+        img_html = f'<img src="{idea["image_url"]}" alt="{idea["title"]}" onerror="this.parentElement.innerHTML=\'🎁\'">' if idea.get('image_url') else '🎁'
+        if session.get('user_id'):
+            add_btn = f'<a href="/add_item_from_idea/{idea["id"]}" class="btn btn-block">➕ В мой виш</a>'
+        else:
+            add_btn = '<a href="/login" class="btn btn-secondary btn-block">Войти</a>'
         ideas_html += f'''
         <div class="item-card">
             <div class="item-image">{img_html}</div>
@@ -1692,6 +1700,7 @@ def ideas():
             </div>
         </div>
         '''
+    all_btn_class = "btn-success" if not category else "btn-secondary"
     content = f'''
     <div class="flex-between mb-4"><div><h1>💡 Идеи подарков</h1><p style="color: var(--text-secondary);">Готовые идеи для вишей</p></div></div>
     <div class="card" style="margin-bottom: 20px;">
@@ -1702,7 +1711,7 @@ def ideas():
         </form>
     </div>
     <div class="flex mb-4" style="flex-wrap: wrap; gap: 8px;">
-        <a href="/ideas" class="btn btn-sm {"btn-success" if not category else "btn-secondary"}">🌟 Все</a>
+        <a href="/ideas" class="btn btn-sm {all_btn_class}">🌟 Все</a>
         {category_buttons}
     </div>
     <div class="grid">{ideas_html}</div>
@@ -1738,7 +1747,8 @@ def add_from_idea(idea_id):
                         (wishlist['id'], idea['title'], idea['description'], idea['link'], idea['price'], idea['currency'], idea['image_url'], datetime.now().date()))
         conn.commit()
         flash('✨ Добавлено в виш!', 'success')
-    cur.close(); conn.close()
+    cur.close()
+    conn.close()
     return redirect(url_for('ideas'))
 
 @app.route('/settings', methods=['GET', 'POST'])
@@ -1764,7 +1774,8 @@ def settings():
                 is_valid, msg = validate_email_real(email)
                 if not is_valid:
                     flash(f'❌ {msg}', 'error')
-                    cur.close(); conn.close()
+                    cur.close()
+                    conn.close()
                     return redirect(url_for('settings'))
             cur.execute(f'UPDATE users SET email={p} WHERE id={p}', (email, session['user_id']))
             conn.commit()
@@ -1774,18 +1785,21 @@ def settings():
             new_password = request.form.get('new_password', '')
             if len(new_password) < 4:
                 flash('Минимум 4 символа', 'error')
-                cur.close(); conn.close()
+                cur.close()
+                conn.close()
                 return redirect(url_for('settings'))
             cur.execute(f'SELECT password FROM users WHERE id={p}', (session['user_id'],))
             user = cur.fetchone()
             if user['password'] != hashlib.sha256(old_password.encode()).hexdigest():
                 flash('❌ Неверный пароль', 'error')
-                cur.close(); conn.close()
+                cur.close()
+                conn.close()
                 return redirect(url_for('settings'))
             cur.execute(f'UPDATE users SET password={p} WHERE id={p}', (hashlib.sha256(new_password.encode()).hexdigest(), session['user_id']))
             conn.commit()
             flash('🔐 Пароль изменён!', 'success')
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
         return redirect(url_for('settings'))
 
     user_theme = session.get('theme', 'light')
@@ -1797,11 +1811,14 @@ def settings():
     p = ph(db_type)
     cur.execute(f'SELECT * FROM users WHERE id={p}', (session['user_id'],))
     user = cur.fetchone()
-    wishlists_count = cur.execute(f'SELECT COUNT(*) as c FROM wishlists WHERE user_id={p}', (session['user_id'],)).fetchone()
-    wc = wishlists_count['c'] if db_type == 'postgres' else wishlists_count[0]
-    items_count = cur.execute(f'SELECT COUNT(*) as c FROM wishlist_items i JOIN wishlists w ON i.wishlist_id=w.id WHERE w.user_id={p}', (session['user_id'],)).fetchone()
-    ic = items_count['c'] if db_type == 'postgres' else items_count[0]
-    cur.close(); conn.close()
+    cur.execute(f'SELECT COUNT(*) as c FROM wishlists WHERE user_id={p}', (session['user_id'],))
+    wc_row = cur.fetchone()
+    wc = wc_row['c'] if db_type == 'postgres' else wc_row[0]
+    cur.execute(f'SELECT COUNT(*) as c FROM wishlist_items i JOIN wishlists w ON i.wishlist_id=w.id WHERE w.user_id={p}', (session['user_id'],))
+    ic_row = cur.fetchone()
+    ic = ic_row['c'] if db_type == 'postgres' else ic_row[0]
+    cur.close()
+    conn.close()
 
     content = f'''
     <h1>⚙️ Настройки</h1>
@@ -1856,7 +1873,8 @@ def admin():
     reservations_count = get_count('SELECT COUNT(*) as c FROM reservations')
     cur.execute('SELECT * FROM users ORDER BY created_at DESC LIMIT 5')
     recent_users = cur.fetchall()
-    cur.close(); conn.close()
+    cur.close()
+    conn.close()
     recent_html = ''.join([f'<tr><td>{u["id"]}</td><td><b>{u["username"]}</b></td><td>{u["email"] or "-"}</td><td>{u["created_at"]}</td><td>{"🚫" if as_bool(u["is_banned"]) else "✅"}</td></tr>' for u in recent_users])
     content = f'''
     <div class="flex-between mb-4"><h1>🔧 Админ-панель</h1><p style="color: var(--text-secondary);">Привет, {session['username']}!</p></div>
@@ -1882,15 +1900,22 @@ def admin_users():
                    (SELECT COUNT(*) FROM wishlist_items i JOIN wishlists w ON i.wishlist_id=w.id WHERE w.user_id=u.id) as items_count
                    FROM users u ORDER BY u.created_at DESC''')
     users = cur.fetchall()
-    cur.close(); conn.close()
-    users_html = ''.join([f'''
-    <tr>
-        <td>{u["id"]}</td><td><b>{u["username"]}</b></td><td>{u["email"] or '-'}</td><td>{u["created_at"]}</td>
-        <td>{u["login_count"]}</td><td>{u["wishlists_count"]}</td><td>{u["items_count"]}</td>
-        <td>{"<span class='badge badge-danger'>🚫 Бан</span>" if as_bool(u["is_banned"]) else "<span class='badge badge-success'>✅ OK</span>"}{"<span class='badge badge-primary'>⚡</span>" if as_bool(u["is_admin"]) else ""}</td>
-        <td><a href="/admin/user/{u["id"]}/toggle_ban" class="btn btn-sm {"btn-success" if as_bool(u["is_banned"]) else "btn-warning"}">{"✅ Разбан" if as_bool(u["is_banned"]) else "🚫 Бан"}</a></td>
-    </tr>
-    ''' for u in users])
+    cur.close()
+    conn.close()
+    users_html = ''
+    for u in users:
+        banned_badge = "<span class='badge badge-danger'>🚫 Бан</span>" if as_bool(u["is_banned"]) else "<span class='badge badge-success'>✅ OK</span>"
+        admin_badge = "<span class='badge badge-primary'>⚡</span>" if as_bool(u["is_admin"]) else ""
+        btn_class = "btn-success" if as_bool(u["is_banned"]) else "btn-warning"
+        btn_text = "✅ Разбан" if as_bool(u["is_banned"]) else "🚫 Бан"
+        users_html += f'''
+        <tr>
+            <td>{u["id"]}</td><td><b>{u["username"]}</b></td><td>{u["email"] or '-'}</td><td>{u["created_at"]}</td>
+            <td>{u["login_count"]}</td><td>{u["wishlists_count"]}</td><td>{u["items_count"]}</td>
+            <td>{banned_badge}{admin_badge}</td>
+            <td><a href="/admin/user/{u["id"]}/toggle_ban" class="btn btn-sm {btn_class}">{btn_text}</a></td>
+        </tr>
+        '''
     content = f'''
     <div class="flex-between mb-4"><h1>👥 Пользователи ({len(users)})</h1><a href="/admin" class="btn btn-secondary">← Назад</a></div>
     <div class="card"><table><thead><tr><th>ID</th><th>Имя</th><th>Email</th><th>Рег.</th><th>Входов</th><th>Вишей</th><th>Желаний</th><th>Статус</th><th>Действия</th></tr></thead><tbody>{users_html}</tbody></table></div>
@@ -1910,11 +1935,13 @@ def admin_toggle_ban(user_id):
     cur.execute(f'SELECT * FROM users WHERE id={p}', (user_id,))
     user = cur.fetchone()
     if user:
-        new_status = 0 if as_bool(user['is_banned']) else 1
+        new_status = bool_val(db_type, not as_bool(user['is_banned']))
         cur.execute(f'UPDATE users SET is_banned={p} WHERE id={p}', (new_status, user_id))
         conn.commit()
-        flash(f'{"✅ Разбанен" if new_status == 0 else "🚫 Забанен"}: {user["username"]}', 'success')
-    cur.close(); conn.close()
+        is_banned_now = as_bool(user['is_banned'])
+        flash(f'{"✅ Разбанен" if is_banned_now else "🚫 Забанен"}: {user["username"]}', 'success')
+    cur.close()
+    conn.close()
     return redirect(url_for('admin_users'))
 
 @app.route('/u/<username>')
@@ -1925,12 +1952,15 @@ def public_wishlist(username):
     cur.execute(f'SELECT * FROM users WHERE username={p}', (username,))
     user = cur.fetchone()
     if not user:
-        cur.close(); conn.close()
+        cur.close()
+        conn.close()
         flash('Пользователь не найден', 'error')
         return redirect(url_for('index'))
-    cur.execute(f'SELECT slug FROM wishlists WHERE user_id={p} AND is_public=1 ORDER BY is_default DESC LIMIT 1', (user['id'],))
+    public_val = bool_val(db_type, True)
+    cur.execute(f'SELECT slug FROM wishlists WHERE user_id={p} AND is_public={public_val} ORDER BY is_default DESC LIMIT 1', (user['id'],))
     wishlist = cur.fetchone()
-    cur.close(); conn.close()
+    cur.close()
+    conn.close()
     if wishlist:
         return redirect(url_for('view_wishlist', slug=wishlist['slug']))
     flash('Нет публичных вишей', 'error')
