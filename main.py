@@ -1207,6 +1207,12 @@ def view_wishlist(slug):
                         am = c['amount'] if dt2 == 'postgres' else c[1]
                         contribs_html += f'<div class="contributor-item"><b>{nm}</b> — {format_price(am, item_currency)}</div>'
                     contribs_html += '</div>'
+               # Выносим кнопку в отдельную переменную (избегаем ! в f-string)
+                contribute_btn = ""
+                if not reserve_html and not is_owner:
+                    item_id = item['id']
+                    contribute_btn = f'<a href="/reserve/{item_id}" class="btn btn-success btn-block" style="margin-top: 10px;">💰 Внести свой вклад</a>'
+                
                 collective_html = f'''
                 <div style="margin: 12px 0;">
                     <div class="flex-between" style="font-size: 13px; margin-bottom: 4px;">
@@ -1215,7 +1221,7 @@ def view_wishlist(slug):
                     </div>
                     <div class="collective-progress"><div class="collective-progress-bar" style="width: {min(progress, 100)}%;">{progress}%</div></div>
                     {contribs_html}
-                    {!reserve_html and not is_owner and f'<a href="/reserve/{item["id"]}" class="btn btn-success btn-block" style="margin-top: 10px;">💰 Внести свой вклад</a>' or ""}
+                    {contribute_btn}
                 </div>
                 '''
 
