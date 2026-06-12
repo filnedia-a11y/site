@@ -690,7 +690,6 @@ def make_session_permanent():
     app.permanent_session_lifetime = timedelta(days=30)
 
 @app.route('/')
-@cache.cached(timeout=300)
 def index():
     theme = session.get('theme', 'light')
     conn, db_type = get_db()
