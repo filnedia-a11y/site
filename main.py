@@ -22,55 +22,63 @@ cache = Cache(app, config={
 # ==============================================
 
 # ========== УМНОЕ ПОДКЛЮЧЕНИЕ К БД ==========
+# Глобальный connection pool (создаётся один раз)
 _db_pool = None
 
 def get_db():
+    """Возвращает соединение с БД (из pool для PostgreSQL или новое для SQLite)"""
     global _db_pool
     db_url = os.getenv("DATABASE_URL")
     
     if db_url:
+        # PostgreSQL с connection pool
         from psycopg_pool import ConnectionPool
         from psycopg.rows import dict_row
         
         if 'sslmode=' not in db_url:
             db_url += '?sslmode=require'
         
+        # Создаём pool один раз при первом запросе
         if _db_pool is None:
             _db_pool = ConnectionPool(
                 conninfo=db_url,
                 min_size=2,
                 max_size=10,
                 timeout=30,
-                kwargs={"row_factory": dict_row, "autocommit": False}
+                kwargs={
+                    "row_factory": dict_row,
+                    "autocommit": False
+                }
             )
+            print("✅ Connection pool создан (2-10 подключений)")
         
         conn = _db_pool.getconn()
         return conn, 'postgres'
     else:
+        # SQLite для локальной разработки
         import sqlite3
         conn = sqlite3.connect('wishlist.db')
         conn.row_factory = sqlite3.Row
         return conn, 'sqlite'
 
 def close_db(conn, db_type):
+    """Безопасно закрывает соединение или возвращает в pool"""
     global _db_pool
-    if db_type == 'postgres' and _db_pool:
-        _db_pool.putconn(conn)
+    if db_type == 'postgres' and _db_pool is not None:
+        try:
+            _db_pool.putconn(conn)
+        except (ValueError, Exception) as e:
+            print(f"⚠️ Возвращаем в pool не удалось, закрываем напрямую: {e}")
+            try:
+                conn.close()
+            except:
+                pass
     else:
-        close_db(conn, db_type)
-    db_url = os.getenv("DATABASE_URL")
-    if db_url:
-        import psycopg
-        from psycopg.rows import dict_row
-        if 'sslmode=' not in db_url:
-            db_url += '?sslmode=require'
-        conn = psycopg.connect(db_url, row_factory=dict_row)
-        return conn, 'postgres'
-    else:
-        import sqlite3
-        conn = sqlite3.connect('wishlist.db')
-        conn.row_factory = sqlite3.Row
-        return conn, 'sqlite'
+        try:
+            conn.close()
+        except:
+            pass
+
 
 def ph(db_type):
     return '%s' if db_type == 'postgres' else '?'
@@ -244,10 +252,15 @@ def init_db():
     except Exception as e:
         print(f"⚠️ Ошибка индексов: {e}")
     # ==============================================
-    
     conn.commit()
     cur.close()
-    close_db(conn, db_type)  # ← тоже заменили!
+    
+    # Закрываем соединение напрямую (без pool, т.к. это инициализация)
+    try:
+        conn.close()
+    except:
+        pass
+    
     add_manual_ideas()
     cur.close()
     close_db(conn, db_type)
