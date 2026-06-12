@@ -48,6 +48,13 @@ def as_bool(value):
     if value is None: return False
     if isinstance(value, bool): return value
     return bool(value)
+    
+ def bool_val(db_type, value):
+    """Возвращает правильное булево значение для SQL-запросов"""
+    if db_type == 'postgres':
+        return 'TRUE' if value else 'FALSE'
+    else:
+        return '1' if value else '0'
 
 def add_column_if_not_exists(cur, table, column, definition):
     try:
@@ -682,9 +689,8 @@ def index():
         cur.execute(q, params)
         r = cur.fetchone()
         return r['c'] if db_type == 'postgres' else r[0]
-
-    users_count = get_count('SELECT COUNT(*) as c FROM users WHERE is_banned=0')
-    wishes_count = get_count('SELECT COUNT(*) as c FROM wishlists')
+        
+    users_count = get_count(f'SELECT COUNT(*) as c FROM users WHERE is_banned={bool_val(db_type, False)}')    wishes_count = get_count('SELECT COUNT(*) as c FROM wishlists')
     items_count = get_count('SELECT COUNT(*) as c FROM wishlist_items')
     ideas_count = get_count('SELECT COUNT(*) as c FROM ideas')
     cur.close(); conn.close()
@@ -808,7 +814,7 @@ def login():
         cur = conn.cursor()
         p = ph(db_type)
         if is_admin_login:
-            cur.execute(f'SELECT * FROM users WHERE username={p} AND password={p} AND is_admin=1 AND is_banned=0', (username, hashed_pw))
+            cur.execute(f'SELECT * FROM users WHERE username={p} AND password={p} AND is_admin={bool_val(db_type, True)} AND is_banned={bool_val(db_type, False)}', (username, hashed_pw))
             user = cur.fetchone()
             if user:
                 session['user_id'] = user['id']
@@ -1078,10 +1084,10 @@ def new_wishlist():
         conn, db_type = get_db()
         cur = conn.cursor()
         p = ph(db_type)
-        is_public = 1 if request.form.get('is_public') else 0
+        is_public_val = bool_val(db_type, request.form.get('is_public'))
         if db_type == 'postgres':
             cur.execute(f'INSERT INTO wishlists (user_id, title, description, slug, is_public, cover_emoji, created_at) VALUES ({p},{p},{p},{p},{p},{p},CURRENT_DATE)',
-                        (session['user_id'], title, request.form.get('description', ''), slug, is_public, request.form.get('cover_emoji', '🎁')))
+                        (session['user_id'], title, request.form.get('description', ''), slug, is_public_val, request.form.get('cover_emoji', '🎁')))
         else:
             cur.execute(f'INSERT INTO wishlists (user_id, title, description, slug, is_public, cover_emoji, created_at) VALUES ({p},{p},{p},{p},{p},{p},?)',
                         (session['user_id'], title, request.form.get('description', ''), slug, is_public, request.form.get('cover_emoji', '🎁'), datetime.now().date()))
