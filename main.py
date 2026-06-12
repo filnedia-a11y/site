@@ -17,12 +17,11 @@ app.permanent_session_lifetime = timedelta(days=30)
 def get_db():
     db_url = os.getenv("DATABASE_URL")
     if db_url:
-        import psycopg2
-        from psycopg2.extras import RealDictCursor
+        import psycopg
+        from psycopg.rows import dict_row
         if 'sslmode=' not in db_url:
             db_url += '?sslmode=require'
-        conn = psycopg2.connect(db_url)
-        conn.cursor_factory = RealDictCursor
+        conn = psycopg.connect(db_url, row_factory=dict_row)
         return conn, 'postgres'
     else:
         import sqlite3
@@ -183,7 +182,7 @@ def add_manual_ideas():
     p = ph(db_type)
     cur.execute(f'SELECT COUNT(*) as cnt FROM ideas WHERE source={p}', ('manual',))
     cnt_row = cur.fetchone()
-    cnt = cnt_row['cnt'] if isinstance(cnt_row, dict) else cnt_row[0]
+    cnt = cnt_row['cnt'] if cnt_row else 0
     if cnt > 0:
         cur.close(); conn.close()
         return
