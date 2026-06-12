@@ -1,6 +1,7 @@
 import os, hashlib, random, re
 from datetime import datetime, timedelta
 from flask import Flask, render_template_string, request, redirect, url_for, session, flash
+from flask_caching import Cache
 
 # ========== НАСТРОЙКИ ==========
 SECRET_KEY = "supersecretkey123_wishlist_pro_2026"
@@ -13,8 +14,50 @@ app = Flask(__name__)
 app.secret_key = SECRET_KEY
 app.permanent_session_lifetime = timedelta(days=30)
 
+# ========== КЭШИРОВАНИЕ (вставляем сюда) ==========
+cache = Cache(app, config={
+    'CACHE_TYPE': 'SimpleCache',
+    'CACHE_DEFAULT_TIMEOUT': 300  # 5 минут
+})
+# ==============================================
+
 # ========== УМНОЕ ПОДКЛЮЧЕНИЕ К БД ==========
+_db_pool = None
+
 def get_db():
+    global _db_pool
+    db_url = os.getenv("DATABASE_URL")
+    
+    if db_url:
+        from psycopg_pool import ConnectionPool
+        from psycopg.rows import dict_row
+        
+        if 'sslmode=' not in db_url:
+            db_url += '?sslmode=require'
+        
+        if _db_pool is None:
+            _db_pool = ConnectionPool(
+                conninfo=db_url,
+                min_size=2,
+                max_size=10,
+                timeout=30,
+                kwargs={"row_factory": dict_row, "autocommit": False}
+            )
+        
+        conn = _db_pool.getconn()
+        return conn, 'postgres'
+    else:
+        import sqlite3
+        conn = sqlite3.connect('wishlist.db')
+        conn.row_factory = sqlite3.Row
+        return conn, 'sqlite'
+
+def close_db(conn, db_type):
+    global _db_pool
+    if db_type == 'postgres' and _db_pool:
+        _db_pool.putconn(conn)
+    else:
+        close_db(conn, db_type)
     db_url = os.getenv("DATABASE_URL")
     if db_url:
         import psycopg
@@ -180,8 +223,34 @@ def init_db():
         add_column_if_not_exists(cur, 'wishlist_items', 'guest_email', 'TEXT')
 
     conn.commit()
+        # ========== ИНДЕКСЫ БД (вставляем сюда) ==========
+    try:
+        if db_type == 'postgres':
+            cur.execute('CREATE INDEX IF NOT EXISTS idx_wishlists_user ON wishlists(user_id)')
+            cur.execute('CREATE INDEX IF NOT EXISTS idx_wishlists_slug ON wishlists(slug)')
+            cur.execute('CREATE INDEX IF NOT EXISTS idx_items_wishlist ON wishlist_items(wishlist_id)')
+            cur.execute('CREATE INDEX IF NOT EXISTS idx_items_reserved ON wishlist_items(reserved_by)')
+            cur.execute('CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)')
+            cur.execute('CREATE INDEX IF NOT EXISTS idx_users_email ON users(email)')
+            cur.execute('CREATE INDEX IF NOT EXISTS idx_ideas_category ON ideas(category)')
+            cur.execute('CREATE INDEX IF NOT EXISTS idx_contributions_item ON contributions(item_id)')
+            cur.execute('CREATE INDEX IF NOT EXISTS idx_resets_token ON password_resets(token)')
+        else:
+            cur.execute('CREATE INDEX IF NOT EXISTS idx_wishlists_user ON wishlists(user_id)')
+            cur.execute('CREATE INDEX IF NOT EXISTS idx_wishlists_slug ON wishlists(slug)')
+            cur.execute('CREATE INDEX IF NOT EXISTS idx_items_wishlist ON wishlist_items(wishlist_id)')
+            cur.execute('CREATE INDEX IF NOT EXISTS idx_users_username ON users(username)')
+        print("✅ Индексы БД созданы")
+    except Exception as e:
+        print(f"⚠️ Ошибка индексов: {e}")
+    # ==============================================
+    
+    conn.commit()
     cur.close()
-    conn.close()
+    close_db(conn, db_type)  # ← тоже заменили!
+    add_manual_ideas()
+    cur.close()
+    close_db(conn, db_type)
     add_manual_ideas()
 
 # ========== ИДЕИ ==========
@@ -194,7 +263,7 @@ def add_manual_ideas():
     cnt = cnt_row['cnt'] if cnt_row else 0
     if cnt > 0:
         cur.close()
-        conn.close()
+        close_db(conn, db_type)
         return
 
     ideas_data = [
@@ -256,7 +325,7 @@ def add_manual_ideas():
 
     conn.commit()
     cur.close()
-    conn.close()
+    close_db(conn, db_type)
     print(f"✅ Добавлено {len(ideas_data)} идей!")
 
 # ========== УТИЛИТЫ ==========
@@ -608,6 +677,7 @@ def make_session_permanent():
     app.permanent_session_lifetime = timedelta(days=30)
 
 @app.route('/')
+@cache.cached(timeout=300)
 def index():
     theme = session.get('theme', 'light')
     conn, db_type = get_db()
@@ -623,7 +693,7 @@ def index():
     items_count = get_count('SELECT COUNT(*) as c FROM wishlist_items')
     ideas_count = get_count('SELECT COUNT(*) as c FROM ideas')
     cur.close()
-    conn.close()
+    close_db(conn, db_type)
 
     user_logged = session.get("user_id")
     if user_logged:
@@ -688,7 +758,7 @@ def register():
         cur.execute(f'SELECT id FROM users WHERE username={p}', (username,))
         if cur.fetchone():
             cur.close()
-            conn.close()
+            close_db(conn, db_type)
             flash('Такой вишелюб уже существует', 'error')
             return redirect(url_for('register'))
 
@@ -711,7 +781,7 @@ def register():
                         (user_id, 'Мой первый виш', 'Главный вишлист', slug, datetime.now().date()))
         conn.commit()
         cur.close()
-        conn.close()
+        close_db(conn, db_type)
         flash('🎉 Добро пожаловать!', 'success')
         return redirect(url_for('login'))
 
@@ -765,12 +835,12 @@ def login():
                     cur.execute(f'UPDATE users SET last_login=?, login_count=login_count+1 WHERE id={p}', (datetime.now().date(), user['id']))
                 conn.commit()
                 cur.close()
-                conn.close()
+                close_db(conn, db_type)
                 flash(f'👑 Добро пожаловать, админ {user["username"]}!', 'success')
                 return redirect(url_for('admin'))
             else:
                 cur.close()
-                conn.close()
+                close_db(conn, db_type)
                 flash('🚫 Неверные данные администратора', 'error')
                 return redirect(url_for('login'))
         else:
@@ -778,7 +848,7 @@ def login():
             user = cur.fetchone()
             if user and as_bool(user['is_banned']):
                 cur.close()
-                conn.close()
+                close_db(conn, db_type)
                 flash('🚫 Аккаунт заблокирован', 'error')
                 return redirect(url_for('login'))
             if user:
@@ -793,14 +863,14 @@ def login():
                     cur.execute(f'UPDATE users SET last_login=?, login_count=login_count+1 WHERE id={p}', (datetime.now().date(), user['id']))
                 conn.commit()
                 cur.close()
-                conn.close()
+                close_db(conn, db_type)
                 flash(f'👋 С возвращением, {user["username"]}!', 'success')
                 if as_bool(user['is_admin']):
                     return redirect(url_for('admin'))
                 return redirect(url_for('dashboard'))
             else:
                 cur.close()
-                conn.close()
+                close_db(conn, db_type)
                 flash('Неверное имя или пароль', 'error')
     theme = session.get('theme', 'light')
     content = '''
@@ -872,7 +942,7 @@ def forgot_password():
         if not user:
             flash('✅ Если email зарегистрирован — письмо отправлено', 'success')
             cur.close()
-            conn.close()
+            close_db(conn, db_type)
             return redirect(url_for('login'))
 
         import secrets
@@ -887,7 +957,7 @@ def forgot_password():
                         (user['id'], token, expires.isoformat()))
         conn.commit()
         cur.close()
-        conn.close()
+        close_db(conn, db_type)
 
         reset_url = f"{BASE_URL}/reset-password/{token}"
         html = f'''
@@ -928,7 +998,7 @@ def reset_password(token):
 
     if not reset or as_bool(reset['used']):
         cur.close()
-        conn.close()
+        close_db(conn, db_type)
         flash('❌ Ссылка недействительна или уже использована', 'error')
         return redirect(url_for('forgot_password'))
 
@@ -937,7 +1007,7 @@ def reset_password(token):
         expires = datetime.fromisoformat(expires)
     if datetime.now() > expires:
         cur.close()
-        conn.close()
+        close_db(conn, db_type)
         flash('⏰ Ссылка истекла', 'error')
         return redirect(url_for('forgot_password'))
 
@@ -954,12 +1024,12 @@ def reset_password(token):
             cur.execute(f'UPDATE password_resets SET used = 1 WHERE token = {p}', (token,))
         conn.commit()
         cur.close()
-        conn.close()
+        close_db(conn, db_type)
         flash('✅ Пароль изменён!', 'success')
         return redirect(url_for('login'))
 
     cur.close()
-    conn.close()
+    close_db(conn, db_type)
     content = '''
     <div class="card animate-scale" style="max-width: 500px; margin: 40px auto;">
         <h2>🔑 Новый пароль</h2>
@@ -992,7 +1062,7 @@ def dashboard():
                     FROM wishlists w WHERE w.user_id = {p} ORDER BY w.is_default DESC, w.created_at DESC''', (user_id,))
     wishlists = cur.fetchall()
     cur.close()
-    conn.close()
+    close_db(conn, db_type)
 
     if not wishlists:
         content = '<div class="empty-state animate-scale"><div class="empty-state-icon">🎁</div><h2>У тебя пока нет вишей</h2><p style="color: var(--text-secondary); margin-bottom: 24px;">Создай первый!</p><a href="/wishlist/new" class="btn btn-lg">✨ Создать первый виш</a></div>'
@@ -1042,7 +1112,7 @@ def new_wishlist():
                         (session['user_id'], title, request.form.get('description', ''), slug, is_public_val, request.form.get('cover_emoji', '🎁'), datetime.now().date()))
         conn.commit()
         cur.close()
-        conn.close()
+        close_db(conn, db_type)
         flash(f'🎉 Виш "{title}" создан!', 'success')
         return redirect(url_for('view_wishlist', slug=slug))
 
@@ -1073,7 +1143,7 @@ def view_wishlist(slug):
     wishlist = cur.fetchone()
     if not wishlist:
         cur.close()
-        conn.close()
+        close_db(conn, db_type)
         flash('Виш не найден', 'error')
         return redirect(url_for('index'))
     cur.execute(f'SELECT * FROM users WHERE id={p}', (wishlist['user_id'],))
@@ -1081,13 +1151,13 @@ def view_wishlist(slug):
     current_user_id = session.get('user_id')
     if not as_bool(wishlist['is_public']) and current_user_id != wishlist['user_id'] and not session.get('is_admin'):
         cur.close()
-        conn.close()
+        close_db(conn, db_type)
         flash('Виш приватный', 'error')
         return redirect(url_for('index'))
     cur.execute(f'SELECT i.*, u.username as reserved_by_name FROM wishlist_items i LEFT JOIN users u ON i.reserved_by = u.id WHERE i.wishlist_id = {p} ORDER BY i.priority DESC, i.created_at DESC', (wishlist['id'],))
     items = cur.fetchall()
     cur.close()
-    conn.close()
+    close_db(conn, db_type)
     is_owner = current_user_id == wishlist['user_id']
     user_currency = session.get('currency', user['currency'] or 'BYN')
 
@@ -1250,7 +1320,7 @@ def add_to_wishlist(slug):
     wishlist = cur.fetchone()
     if not wishlist:
         cur.close()
-        conn.close()
+        close_db(conn, db_type)
         flash('Виш не найден', 'error')
         return redirect(url_for('dashboard'))
 
@@ -1258,7 +1328,7 @@ def add_to_wishlist(slug):
         title = request.form['title'].strip()
         if not title:
             cur.close()
-            conn.close()
+            close_db(conn, db_type)
             flash('Введите название', 'error')
             return redirect(url_for('add_to_wishlist', slug=slug))
 
@@ -1285,12 +1355,12 @@ def add_to_wishlist(slug):
                  is_secret, is_collective, goal_amount, datetime.now().date()))
         conn.commit()
         cur.close()
-        conn.close()
+        close_db(conn, db_type)
         flash('✨ Добавлено в виш!', 'success')
         return redirect(url_for('view_wishlist', slug=slug))
 
     cur.close()
-    conn.close()
+    close_db(conn, db_type)
     theme = session.get('theme', 'light')
     currency_options = ''.join([f'<option value="{code}" {"selected" if code == session.get("currency", "BYN") else ""}>{name}</option>' for code, name in CURRENCIES.items()])
     content = f'''
@@ -1336,7 +1406,7 @@ def edit_wishlist(slug):
     wishlist = cur.fetchone()
     if not wishlist:
         cur.close()
-        conn.close()
+        close_db(conn, db_type)
         flash('Виш не найден', 'error')
         return redirect(url_for('dashboard'))
 
@@ -1346,12 +1416,12 @@ def edit_wishlist(slug):
                     (request.form['title'], request.form.get('description', ''), request.form.get('cover_emoji', '🎁'), is_public, wishlist['id']))
         conn.commit()
         cur.close()
-        conn.close()
+        close_db(conn, db_type)
         flash('✅ Виш обновлён!', 'success')
         return redirect(url_for('view_wishlist', slug=slug))
 
     cur.close()
-    conn.close()
+    close_db(conn, db_type)
     theme = session.get('theme', 'light')
     emojis = ['🎁', '🎂', '🎄', '💝', '🎓', '👰', '🏠', '🚗', '✈️', '💻', '📱', '🎮', '📚', '🎨', '⚽', '🎵', '💎', '🌹', '🍰', '🎈']
     emoji_html = ''.join([f'<div class="emoji-option {"selected" if e == wishlist["cover_emoji"] else ""}" onclick="selectEmoji(this, \'{e}\')">{e}</div>' for e in emojis])
@@ -1388,7 +1458,7 @@ def delete_wishlist(slug):
         conn.commit()
         flash('🗑️ Виш удалён', 'success')
     cur.close()
-    conn.close()
+    close_db(conn, db_type)
     return redirect(url_for('dashboard'))
 
 @app.route('/item/<int:item_id>/edit', methods=['GET', 'POST'])
@@ -1402,7 +1472,7 @@ def edit_item(item_id):
     item = cur.fetchone()
     if not item or item['user_id'] != session['user_id']:
         cur.close()
-        conn.close()
+        close_db(conn, db_type)
         flash('Нет доступа', 'error')
         return redirect(url_for('dashboard'))
 
@@ -1417,12 +1487,12 @@ def edit_item(item_id):
                      int(request.form.get('priority', 0)), is_secret, is_collective, goal_amount, item_id))
         conn.commit()
         cur.close()
-        conn.close()
+        close_db(conn, db_type)
         flash('✅ Обновлено!', 'success')
         return redirect(url_for('view_wishlist', slug=item['slug']))
 
     cur.close()
-    conn.close()
+    close_db(conn, db_type)
     theme = session.get('theme', 'light')
     item_currency = item["currency"] or session.get("currency", "BYN")
     currency_options = ''.join([f'<option value="{code}" {"selected" if code == item_currency else ""}>{name}</option>' for code, name in CURRENCIES.items()])
@@ -1480,7 +1550,7 @@ def delete_item(item_id):
     else:
         slug = None
     cur.close()
-    conn.close()
+    close_db(conn, db_type)
     return redirect(url_for('view_wishlist', slug=slug) if slug else url_for('dashboard'))
 
 @app.route('/reserve/<int:item_id>', methods=['GET', 'POST'])
@@ -1492,7 +1562,7 @@ def reserve(item_id):
     item = cur.fetchone()
     if not item:
         cur.close()
-        conn.close()
+        close_db(conn, db_type)
         flash('Подарок не найден', 'error')
         return redirect(url_for('index'))
 
@@ -1503,7 +1573,7 @@ def reserve(item_id):
     if session.get('user_id'):
         if item.get('reserved_by') or item.get('guest_name'):
             cur.close()
-            conn.close()
+            close_db(conn, db_type)
             flash('Уже забронировано', 'error')
             return redirect(url_for('view_wishlist', slug=slug))
         cur.execute(f'UPDATE wishlist_items SET reserved_by = {p} WHERE id = {p}', (session['user_id'], item_id))
@@ -1513,7 +1583,7 @@ def reserve(item_id):
             cur.execute(f'INSERT INTO reservations (item_id, reserved_by, reserved_at) VALUES ({p},{p},?)', (item_id, session['user_id'], datetime.now().date()))
         conn.commit()
         cur.close()
-        conn.close()
+        close_db(conn, db_type)
         flash('🎯 Забронировано!', 'success')
         return redirect(url_for('view_wishlist', slug=slug))
 
@@ -1542,25 +1612,25 @@ def reserve(item_id):
                 cur.execute(f'INSERT INTO contributions (item_id, guest_name, amount, created_at) VALUES ({p},{p},{p},?)', (item_id, guest_name, amount, datetime.now().date()))
             conn.commit()
             cur.close()
-            conn.close()
+            close_db(conn, db_type)
             flash(f'💰 Спасибо, {guest_name}! Взнос записан', 'success')
             return redirect(url_for('view_wishlist', slug=slug))
 
         if item.get('reserved_by') or item.get('guest_name'):
             cur.close()
-            conn.close()
+            close_db(conn, db_type)
             flash('Уже забронировано', 'error')
             return redirect(url_for('view_wishlist', slug=slug))
 
         cur.execute(f'UPDATE wishlist_items SET guest_name = {p}, guest_email = {p} WHERE id = {p}', (guest_name, guest_email, item_id))
         conn.commit()
         cur.close()
-        conn.close()
+        close_db(conn, db_type)
         flash(f'🎉 Спасибо, {guest_name}! Бронь принята', 'success')
         return redirect(url_for('view_wishlist', slug=slug))
 
     cur.close()
-    conn.close()
+    close_db(conn, db_type)
 
     is_collective = as_bool(item.get('is_collective')) and item.get('goal_amount')
     collected = 0
@@ -1638,7 +1708,7 @@ def unreserve(item_id):
     item = cur.fetchone()
     if not item:
         cur.close()
-        conn.close()
+        close_db(conn, db_type)
         return redirect(url_for('index'))
     cur.execute(f'SELECT slug FROM wishlists WHERE id = {p}', (item['wishlist_id'],))
     wishlist = cur.fetchone()
@@ -1647,11 +1717,12 @@ def unreserve(item_id):
     cur.execute(f'DELETE FROM reservations WHERE item_id={p} AND reserved_by={p}', (item_id, session['user_id']))
     conn.commit()
     cur.close()
-    conn.close()
+    close_db(conn, db_type)
     flash('↩️ Бронь снята', 'success')
     return redirect(url_for('view_wishlist', slug=slug) if slug else url_for('index'))
 
 @app.route('/ideas')
+@cache.cached(timeout=300, query_string=True)
 def ideas():
     theme = session.get('theme', 'light')
     user_currency = session.get('currency', 'BYN')
@@ -1670,7 +1741,7 @@ def ideas():
     cur.execute('SELECT DISTINCT category FROM ideas WHERE category IS NOT NULL')
     categories = cur.fetchall()
     cur.close()
-    conn.close()
+    close_db(conn, db_type)
 
     category_buttons = ''.join([f'<a href="/ideas?category={cat["category"]}" class="btn btn-sm {"btn-success" if category == cat["category"] else "btn-secondary"}">{cat["category"]}</a>' for cat in categories])
     ideas_html = ''
@@ -1748,7 +1819,7 @@ def add_from_idea(idea_id):
         conn.commit()
         flash('✨ Добавлено в виш!', 'success')
     cur.close()
-    conn.close()
+    close_db(conn, db_type)
     return redirect(url_for('ideas'))
 
 @app.route('/settings', methods=['GET', 'POST'])
@@ -1775,7 +1846,7 @@ def settings():
                 if not is_valid:
                     flash(f'❌ {msg}', 'error')
                     cur.close()
-                    conn.close()
+                    close_db(conn, db_type)
                     return redirect(url_for('settings'))
             cur.execute(f'UPDATE users SET email={p} WHERE id={p}', (email, session['user_id']))
             conn.commit()
@@ -1786,20 +1857,20 @@ def settings():
             if len(new_password) < 4:
                 flash('Минимум 4 символа', 'error')
                 cur.close()
-                conn.close()
+                close_db(conn, db_type)
                 return redirect(url_for('settings'))
             cur.execute(f'SELECT password FROM users WHERE id={p}', (session['user_id'],))
             user = cur.fetchone()
             if user['password'] != hashlib.sha256(old_password.encode()).hexdigest():
                 flash('❌ Неверный пароль', 'error')
                 cur.close()
-                conn.close()
+                close_db(conn, db_type)
                 return redirect(url_for('settings'))
             cur.execute(f'UPDATE users SET password={p} WHERE id={p}', (hashlib.sha256(new_password.encode()).hexdigest(), session['user_id']))
             conn.commit()
             flash('🔐 Пароль изменён!', 'success')
         cur.close()
-        conn.close()
+        close_db(conn, db_type)
         return redirect(url_for('settings'))
 
     user_theme = session.get('theme', 'light')
@@ -1818,7 +1889,7 @@ def settings():
     ic_row = cur.fetchone()
     ic = ic_row['c'] if db_type == 'postgres' else ic_row[0]
     cur.close()
-    conn.close()
+    close_db(conn, db_type)
 
     content = f'''
     <h1>⚙️ Настройки</h1>
@@ -1874,7 +1945,7 @@ def admin():
     cur.execute('SELECT * FROM users ORDER BY created_at DESC LIMIT 5')
     recent_users = cur.fetchall()
     cur.close()
-    conn.close()
+    close_db(conn, db_type)
     recent_html = ''.join([f'<tr><td>{u["id"]}</td><td><b>{u["username"]}</b></td><td>{u["email"] or "-"}</td><td>{u["created_at"]}</td><td>{"🚫" if as_bool(u["is_banned"]) else "✅"}</td></tr>' for u in recent_users])
     content = f'''
     <div class="flex-between mb-4"><h1>🔧 Админ-панель</h1><p style="color: var(--text-secondary);">Привет, {session['username']}!</p></div>
@@ -1901,7 +1972,7 @@ def admin_users():
                    FROM users u ORDER BY u.created_at DESC''')
     users = cur.fetchall()
     cur.close()
-    conn.close()
+    close_db(conn, db_type)
     users_html = ''
     for u in users:
         banned_badge = "<span class='badge badge-danger'>🚫 Бан</span>" if as_bool(u["is_banned"]) else "<span class='badge badge-success'>✅ OK</span>"
@@ -1941,7 +2012,7 @@ def admin_toggle_ban(user_id):
         is_banned_now = as_bool(user['is_banned'])
         flash(f'{"✅ Разбанен" if is_banned_now else "🚫 Забанен"}: {user["username"]}', 'success')
     cur.close()
-    conn.close()
+    close_db(conn, db_type)
     return redirect(url_for('admin_users'))
 
 @app.route('/u/<username>')
@@ -1953,14 +2024,14 @@ def public_wishlist(username):
     user = cur.fetchone()
     if not user:
         cur.close()
-        conn.close()
+        close_db(conn, db_type)
         flash('Пользователь не найден', 'error')
         return redirect(url_for('index'))
     public_val = bool_val(db_type, True)
     cur.execute(f'SELECT slug FROM wishlists WHERE user_id={p} AND is_public={public_val} ORDER BY is_default DESC LIMIT 1', (user['id'],))
     wishlist = cur.fetchone()
     cur.close()
-    conn.close()
+    close_db(conn, db_type)
     if wishlist:
         return redirect(url_for('view_wishlist', slug=wishlist['slug']))
     flash('Нет публичных вишей', 'error')
